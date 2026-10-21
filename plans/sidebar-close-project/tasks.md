@@ -81,3 +81,13 @@ current: done
 - 依赖: T1、T5
 - 验证记录: 读 diff：`docs/agents/sessions.md` 侧栏小节只加了一段 bullet（并在 group ⋯ 菜单那段的项目组清单里加 "Close project"），`AGENTS.md` 的 API 清单/文件地图/Topic Notes 只增两行并补上述文字；`npm test` exit 0（2789 tests，2788 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。同一提交里把分组菜单的"关闭项目"从位置组末尾移到项目组（Open in new tab 之后），与文档描述的"three groups"一致。
 - 复盘修正：同一句不再声称"关闭的分组永远不会画成当前"，改为"关闭当前项目先迁 cwd；仍然当前（别处关闭、或无处可迁）则保留分组与归档族直到不再是当前"；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
+
+## T9 关闭接口的 409 有测试  - [x]
+
+- 原因: T1 的验证只覆盖了纯存储，路线的守卫无法从进程外验证。
+- 结果: `POST /api/projects/closed` 的守卫走的是自动测试：什么都不跑时关闭有会话的项目返回 `200`（且不建会话表、不取实时行）；项目内有运行会话返回 `409 { reason: "running" }` 且集合不变；有等待输入的会话时返回 `409 { reason: "awaiting" }`（即便同项目另有运行会话）；运行会话在别的项目时返回 `200`；子代理自己 cwd 在别处、根在本项目时返回 `409`；无文件的实时会话经 `attachSessionProjectInfo()` 并入本项目的表；`closed: false` 返回 `200` 且键消失、`GET` 反映该集合；`{}`/`closed: "yes"` 返回 `400`，`text/plain` 返回 `415`。
+- 假设: 进程内 AgentSession 注册表在测试进程里恒为空，所以 `@/lib/rpc-manager` 与 `@/lib/session-reader` 只能用 jiti `alias` 换成可被测试改写的 fixture（键为模块绝对路径去扩展名、正斜杠、Windows 盘符大写），且该测试不能与已加载真实模块的测试共用 jiti 缓存（因此放在 `app/` 下）。
+- 约束: D3（两条守卫同一规则）。
+- 验证: `node --experimental-strip-types --test app/api/projects/closed/route.test.mjs`；`npm test`；`node_modules/.bin/tsc --noEmit`；`npm run lint`。
+- 依赖: T1、T3
+- 验证记录: `node --experimental-strip-types --test app/api/projects/closed/route.test.mjs` 8 pass / 0 fail；`npm test` exit 0（2798 tests，2797 pass，1 skipped，0 fail，新文件被 `app/**/*.test.mjs` 收进来）；`tsc --noEmit`、`npm run lint` 干净。route.ts 与组件无改动（只为测试新增两个 fixture 模块）。
