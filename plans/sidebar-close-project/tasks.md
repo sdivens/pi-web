@@ -60,14 +60,14 @@ current: T4
 - 依赖: T1、T4、T5
 - 验证记录:
 
-## T7 三语种文案  - [ ]
+## T7 三语种文案  - [x]
 
 - 结果: `sidebar.closeProject`、`sidebar.closedProject`、`sidebar.closeProjectBlockedRunning`、`sidebar.closeProjectBlockedAwaiting`、`sidebar.closeProjectFailed` 五个键在 `en` / `zh-CN` / `zh-TW` 三份文案里都存在且语义一致。
 - 假设: `lib/i18n/registry.test.mjs` 会对缺键/多键直接报错。
 - 约束: 仓库 i18n 约定。
 - 验证: `npm test`。
 - 依赖: 无
-- 验证记录:
+- 验证记录: `node --experimental-strip-types --test lib/i18n/registry.test.mjs` 3 pass / 0 fail（三语种键集与占位符一致）；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
 
 ## T8 文档与文件地图  - [ ]
 
