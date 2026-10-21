@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T4
+current: T5
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -33,14 +33,14 @@ current: T4
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/sidebar-actions.test.mjs` 13 pass / 0 fail（新增 2 个用例）；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）；`node_modules/.bin/tsc --noEmit`、`npm run lint` 干净。
 
-## T4 侧栏接入关闭集合（轮询 + 建树入参）  - [ ]
+## T4 侧栏接入关闭集合（轮询 + 建树入参）  - [x]
 
 - 结果: 侧栏持有关闭集合 state，从轮询与 `POST` 响应更新；把它同时传给 `buildSessionTree` 与 `buildArchiveRows`。在另一个标签页关掉一个项目后，本标签页最迟一个轮询周期内消失，且不触发会话列表重扫（`sessionListVersion` 不变）。
 - 假设: 轮询响应解析集中在 `SessionSidebar.tsx` 的一个 `fetch("/api/agent/running")` 处，字段可在那里追加；`sameIdsOr()` 之类比较函数可复用。
 - 约束: D7、D8。
 - 验证: `node_modules/.bin/tsc --noEmit`、`npm run lint`；手工：两个标签页，一页关闭，另一页 ≤3s 消失。
 - 依赖: T1、T2
-- 验证记录:
+- 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）。手工两标签页验证留给 reviewer（见交付说明）：轮询只读 `closedProjectsRevision`，集合变化不调 `loadSessions`，`sessionListVersion` 不变。
 
 ## T5 分组菜单"关闭项目" + 当前项目的 cwd 迁移  - [ ]
 

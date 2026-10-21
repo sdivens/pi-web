@@ -545,6 +545,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [fileManagerError, setFileManagerError] = useState<string | null>(null);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [awaitingInputSessionIds, setAwaitingInputSessionIds] = useState<Set<string>>(() => new Set());
+  // Projects closed in this process (lib/project-closed.ts): their groups and
+  // their sessions leave the tree and the archive view until something makes
+  // them current again. The set comes with the running poll every window
+  // already reads, and from this window's own close/reopen answer.
+  const [closedProjectKeys, setClosedProjectKeys] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   const currentSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
@@ -552,6 +557,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Once polling has delivered a snapshot it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const runningPollAuthoritativeRef = useRef(false);
+  // The revision the closed set was taken at: a poll that repeats it changes
+  // nothing, so the tree is not rebuilt every 2.5 s. No render reads it.
+  const closedProjectsRevisionRef = useRef<number | null>(null);
   const detailsHydrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
@@ -898,6 +906,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  /**
+   * Takes a closed-projects snapshot, from the poll or from this window's own
+   * POST, once per revision: an unchanged one leaves the set (and every row
+   * built from it) alone. Not gated on "newer": a restarted process starts
+   * again at revision 0 with nothing closed, and that answer must be taken
+   * even though the page saw higher ones; a slower answer overtaking a newer
+   * one is corrected by the next poll.
+   */
+  const applyClosedProjects = useCallback((keys: string[] | undefined, revision: number | null | undefined) => {
+    if (!Array.isArray(keys) || typeof revision !== "number") return;
+    if (closedProjectsRevisionRef.current === revision) return;
+    closedProjectsRevisionRef.current = revision;
+    setClosedProjectKeys((previous) => sameIdsOr(previous, keys));
+  }, []);
+
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -931,6 +954,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           awaitingInputSessionIds?: string[];
           completionNotificationSuppressedSessionIds?: string[];
           sessionUiStateRevision?: number | null;
+          closedProjectKeys?: string[];
+          closedProjectsRevision?: number;
         };
         if (stopped || controller !== current) return;
         runningPollAuthoritativeRef.current = true;
@@ -941,6 +966,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setAwaitingInputSessionIds((previous) => sameIdsOr(previous, data.awaitingInputSessionIds ?? []));
         // Pins and archive changed in another window: reload them.
         noteUiRevision(data.sessionUiStateRevision);
+        // A project closed or reopened in another window.
+        applyClosedProjects(data.closedProjectKeys, data.closedProjectsRevision);
         if (data.sessionListVersion !== sessionListVersionRef.current) {
           // Reuse the invalidated cache; forcing a scan would change the version again.
           await loadSessions();
@@ -971,7 +998,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadSessions, noteUiRevision]);
+  }, [applyClosedProjects, loadSessions, noteUiRevision]);
 
   useEffect(() => {
     onRunningSessionIdsChange?.(runningSessionIds);
@@ -1427,7 +1454,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     groupExpansion: shownGroupExpansion,
     moreShown,
     pinnedCollapsed,
-  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed]);
+    closedProjectKeys,
+  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed, closedProjectKeys]);
   // Built while the archive view is rendered, its way out included: it
   // leaves as it was, not empty.
   const archiveMounted = archiveMotion.archiveMounted;
@@ -1441,7 +1469,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     selectedSessionId,
     currentProject,
     collapsed: archiveCollapsedSet,
-  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet]);
+    closedProjectKeys,
+  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet, closedProjectKeys]);
   // The archive's projects, top to bottom, folded or not.
   const archiveGroups = useMemo(
     () => archiveRows.flatMap((row) => (row.kind === "archive-group" ? [row] : [])),
