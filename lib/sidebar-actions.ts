@@ -71,6 +71,9 @@ export function sessionMenuEntries(
   ];
 }
 
+/** Why a close is refused, as `projectCloseBlock()` names it and the route's 409 answers it. */
+export type ProjectCloseBlockReason = "awaiting" | "running";
+
 /**
  * Whether a project can be closed right now. A closed project shows again
  * while any of its sessions runs or waits for input (session-tree's
@@ -83,7 +86,7 @@ export function sessionMenuEntries(
 export function projectCloseBlock(
   input: Pick<SessionTreeInput, "sessions" | "runningIds" | "awaitingIds">,
   projectKey: string,
-): { blocked: false } | { blocked: true; reason: "awaiting" | "running" } {
+): { blocked: false } | { blocked: true; reason: ProjectCloseBlockReason } {
   let running = false;
   for (const family of listSessionFamilies(input.sessions)) {
     // A family's project is its root's: a subagent can sit in another cwd.

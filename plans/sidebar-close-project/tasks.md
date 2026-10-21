@@ -14,6 +14,7 @@ current: done
 - 验证: 新增 `lib/project-closed.test.mjs`（关→revision=1、重复关不涨、开→revision 前进、`resetClosedProjectsForTests()` 清空）；`npm test`。
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/project-closed.test.mjs` 5 pass / 0 fail；`npm test` exit 0（2783 tests，2782 pass，1 skipped，0 fail）；`node_modules/.bin/tsc --noEmit` 干净。
+- 复盘修正（关闭校验共用同一规则）：`busyReason()` 删掉，路由改成调 `projectCloseBlock()`（family 口径，与菜单同一个规则），409 的 `reason` 是它的原值 `running` | `awaiting`；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
 
 ## T2 会话树与归档视图的关闭过滤（纯函数）  - [x]
 
@@ -51,6 +52,7 @@ current: done
 - 验证: `node_modules/.bin/tsc --noEmit`；手工 A2、A5 两条验收步骤。
 - 依赖: T3、T4
 - 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 passed，1 skipped）。A2/A5 的手工浏览器步骤留给 reviewer（菜单项在有运行/等待会话时 disabled + 右侧原因；关闭当前项目时按 default-cwd → 首个非关闭项目最新会话 → 默认目录空输入框的顺序迁移，409 时 toast 且 cwd 停在已迁到的地方）。
+- 复盘修正（关闭校验共用同一规则）：`sendProjectClosed()` 把响应的 `reason` 带出来，`closeProject()` 按 `awaiting` / `running` toast `sidebar.closeProjectBlockedAwaiting` / `sidebar.closeProjectBlockedRunning`，其余失败（网络、500、400）才用 `sidebar.closeProjectFailed` + `{ error }`；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
 
 ## T6 重新打开：变成当前项目即解除关闭  - [x]
 

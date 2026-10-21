@@ -53,6 +53,7 @@ import {
   projectNameMenuEntries,
   projectRenameRequest,
   sessionMenuEntries,
+  type ProjectCloseBlockReason,
   type SessionMenuActionId,
 } from "@/lib/sidebar-actions";
 import { splitBeforeForkSuffix } from "@/lib/session-fork-name";
@@ -934,15 +935,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   closedProjectKeysRef.current = closedProjectKeys;
 
   /** POST /api/projects/closed for one project and of this window's own doing. */
-  const sendProjectClosed = useCallback(async (projectKey: string, closed: boolean): Promise<{ ok: boolean; error?: string }> => {
+  const sendProjectClosed = useCallback(async (projectKey: string, closed: boolean): Promise<{ ok: boolean; error?: string; reason?: ProjectCloseBlockReason }> => {
     try {
       const res = await fetch("/api/projects/closed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectKey, closed }),
       });
-      const data = await res.json().catch(() => ({})) as { closedProjectKeys?: string[]; revision?: number; error?: string };
-      if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+      const data = await res.json().catch(() => ({})) as { closedProjectKeys?: string[]; revision?: number; error?: string; reason?: ProjectCloseBlockReason };
+      if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}`, reason: data.reason };
       // Applied at once, so the set does not wait for the next poll.
       applyClosedProjects(data.closedProjectKeys, data.revision);
       return { ok: true };
@@ -2459,7 +2460,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     try {
       if (project.current) await moveCwdOutOfProject(project.key);
       const result = await sendProjectClosed(project.key, true);
-      if (!result.ok) showToast(t("sidebar.closeProjectFailed", { error: result.error ?? "" }));
+      if (!result.ok) {
+        // A refusal names which of the two the menu would have said, in the
+        // user's language; anything else (network, 500, 400) says what happened.
+        const key = result.reason === "awaiting"
+          ? "sidebar.closeProjectBlockedAwaiting"
+          : result.reason === "running"
+            ? "sidebar.closeProjectBlockedRunning"
+            : "sidebar.closeProjectFailed";
+        showToast(t(key, { error: result.error ?? "" }));
+      }
     } finally {
       closingProjectKeyRef.current = null;
     }

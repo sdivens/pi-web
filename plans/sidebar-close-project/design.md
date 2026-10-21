@@ -18,14 +18,14 @@ plan: sidebar-close-project
 - 选择: `app/api/projects/closed/route.ts`
   - `GET` → `{ closedProjectKeys: string[], revision: number }`
   - `POST { projectKey: string, closed?: boolean }`（缺省 `closed: true`）→ `200 { revision, closedProjectKeys }`；`closed: false` 用于重开。
-  - `409 { error, reason: "running" }` 拒绝关闭；`400 invalid-request`；其余守卫照仓库惯例（`isApiRequestAllowed` 403、`hasJsonContentType` 415）。
+  - `409 { error, reason: "running" | "awaiting" }` 拒绝关闭（reason 就是 `projectCloseBlock()` 的结论，两种各有自己的英文 `error`）；`400 invalid-request`；其余守卫照仓库惯例（`isApiRequestAllowed` 403、`hasJsonContentType` 415）。
 - 理由: 一个 revision 源，客户端只需要"看见它就换一份集合"。
 - 备选: close / reopen 两个路由。
 - 否决理由: 两处 revision 计数迟早漂移，且客户端要合并两份快照。
 
 ### D3 运行中/等待输入时拒绝关闭（客户端禁用 + 服务端权威）
 
-- 选择: 纯函数 `projectCloseBlock(input, projectKey)` 放在 `lib/sidebar-actions.ts`：`listSessionFamilies()` 里属于该 key 的 family，任一成员在 `runningIds` 或 `awaitingIds` 中就用它算出 `{ blocked: true, reason: "awaiting" | "running" }`（`awaiting` 优先）。菜单项用 `disabled` + `disabledReason`（`components/SidebarMenu.tsx` 已支持）。POST 路由自己再查一次：`getRunningRpcSessionIds()` / `getAwaitingInputRpcSessionIds()` 与 `listAllSessions({ allowStale: true })` + `getRpcSessionInfos({ includeTransient: true })` 合并后的会话表做 id→`projectKey` 比对。
+- 选择: 纯函数 `projectCloseBlock(input, projectKey)` 放在 `lib/sidebar-actions.ts`：`listSessionFamilies()` 里属于该 key 的 family，任一成员在 `runningIds` 或 `awaitingIds` 中就用它算出 `{ blocked: true, reason: "awaiting" | "running" }`（`awaiting` 优先）。菜单项用 `disabled` + `disabledReason`（`components/SidebarMenu.tsx` 已支持）。POST 路由调同一个函数，不另写一份判定：`sessions` 是 `listAllSessions({ allowStale: true })` 合并 `attachSessionProjectInfo(getRpcSessionInfos({ includeTransient: true }))` 里列表还不认识的 id（transient 会话自己还没有 `projectKey`），`runningIds` / `awaitingIds` 来自 `getRunningRpcSessionIds()` / `getAwaitingInputRpcSessionIds()`；它的 `reason` 直接进 409。
 - 理由: 轮询 2.5s 有窗口；别的标签页可能刚开跑。服务端是唯一权威。
 - 备选: 只靠客户端禁用。
 - 否决理由: 菜单打开的瞬间到点击之间可以开始运行，会留下一个"关闭了却还在跑"的项目。
@@ -124,7 +124,7 @@ POST body { projectKey: string, closed?: boolean }
   200 -> { revision: number, closedProjectKeys: string[] }
   400 -> { error: string }
   403 -> { error: string }
-  409 -> { error: string, reason: "running" }
+  409 -> { error: string, reason: "running" | "awaiting" }
   415 -> { error: string }
 
 // lib/session-tree.ts

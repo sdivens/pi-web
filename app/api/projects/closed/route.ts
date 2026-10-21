@@ -11,7 +11,7 @@ import {
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
 import { attachSessionProjectInfo, listAllSessions } from "@/lib/session-reader";
-import { workspaceKeyOf } from "@/lib/workspace-memory";
+import { projectCloseBlock, type ProjectCloseBlockReason } from "@/lib/sidebar-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,35 +30,21 @@ export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
-function refusal(status: number, error: string, reason?: "running") {
+function refusal(status: number, error: string, reason?: ProjectCloseBlockReason) {
   return NextResponse.json(reason ? { error, reason } : { error }, { status, headers: NO_STORE });
 }
 
 /**
- * Why `projectKey` cannot be closed right now: a member parked on a dialog
- * ("awaiting", the one the user is actually being asked about) before one
- * merely running, else null.
+ * The session table the menu judges (`treeSelectionInput`): the list on disk
+ * plus the live sessions it does not know yet.
  */
-async function busyReason(projectKey: string): Promise<"awaiting" | "running" | null> {
-  const running = new Set(getRunningRpcSessionIds());
-  const awaiting = new Set(getAwaitingInputRpcSessionIds());
-  if (running.size === 0 && awaiting.size === 0) return null;
-
+async function busySessions() {
   const listed = await listAllSessions({ allowStale: true });
   const known = new Set(listed.map((session) => session.id));
   const live = getRpcSessionInfos({ includeTransient: true }).filter((session) => !known.has(session.id));
   // A live session without a file has no project identity yet: resolve it the
   // same way the list does, so its worktree joins its project's key.
-  const sessions = live.length > 0 ? [...listed, ...(await attachSessionProjectInfo(live))] : listed;
-
-  let reason: "awaiting" | "running" | null = null;
-  for (const session of sessions) {
-    if (!running.has(session.id) && !awaiting.has(session.id)) continue;
-    if (workspaceKeyOf(session) !== projectKey) continue;
-    if (awaiting.has(session.id)) return "awaiting";
-    reason = "running";
-  }
-  return reason;
+  return live.length > 0 ? [...listed, ...(await attachSessionProjectInfo(live))] : listed;
 }
 
 // GET /api/projects/closed
@@ -92,11 +78,20 @@ export async function POST(req: Request) {
   }
 
   if (closed !== false) {
-    const reason = await busyReason(projectKey);
-    if (reason !== null) {
-      return refusal(409, reason === "awaiting"
-        ? "A session of this project is waiting for input"
-        : "A session of this project is running", "running");
+    const runningIds = new Set(getRunningRpcSessionIds());
+    const awaitingIds = new Set(getAwaitingInputRpcSessionIds());
+    // Nothing running anywhere: no session can block this project, so the
+    // session table need not be built (a scan of every file).
+    if (runningIds.size > 0 || awaitingIds.size > 0) {
+      // The menu's own rule, so both halves of D3 refuse the same projects: a
+      // family's project is its root's, and a subagent that ran in another cwd
+      // blocks its root's project too.
+      const block = projectCloseBlock({ sessions: await busySessions(), runningIds, awaitingIds }, projectKey);
+      if (block.blocked) {
+        return refusal(409, block.reason === "awaiting"
+          ? "A session of this project is waiting for input"
+          : "A session of this project is running", block.reason);
+      }
     }
   }
 
