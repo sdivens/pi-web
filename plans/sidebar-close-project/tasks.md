@@ -1,19 +1,19 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T1
+current: T2
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
 
-## T1 进程内关闭集合 + 路由 + 轮询字段  - [ ]
+## T1 进程内关闭集合 + 路由 + 轮询字段  - [x]
 
 - 结果: `GET /api/agent/running` 的响应里带上 `closedProjectKeys` 与 `closedProjectsRevision`；`POST /api/projects/closed` 能把一个 key 关掉/打开并让 revision 前进；进程重启后集合为空。
 - 假设: `app/api/agent/running/route.ts` 现在只有 GET，响应字段可自由追加；`lib/mcp-status.ts` 的 `Symbol.for` + `globalThis` 形状可直接照搬。
 - 约束: D1、D2、D8。
 - 验证: 新增 `lib/project-closed.test.mjs`（关→revision=1、重复关不涨、开→revision 前进、`resetClosedProjectsForTests()` 清空）；`npm test`。
 - 依赖: 无
-- 验证记录:
+- 验证记录: `node --experimental-strip-types --test lib/project-closed.test.mjs` 5 pass / 0 fail；`npm test` exit 0（2783 tests，2782 pass，1 skipped，0 fail）；`node_modules/.bin/tsc --noEmit` 干净。
 
 ## T2 会话树与归档视图的关闭过滤（纯函数）  - [ ]
 

@@ -6,12 +6,16 @@ import {
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
 import { getSessionUiStateRevision } from "@/lib/session-ui-state";
+import { getClosedProjectKeys, getClosedProjectsRevision } from "@/lib/project-closed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/agent/running - Lightweight snapshot for visible-tab polling.
 // sessionUiStateRevision (null when unreadable) tells the sidebar its pins and
 // archive changed elsewhere; it costs one stat while the file is unchanged.
+// The closed projects ride along (lib/project-closed.ts): closing and reopening
+// needs a sync in every window, and this poll is already the one that carries
+// the running set the closing check reads.
 export async function GET() {
   return NextResponse.json(
     {
@@ -20,6 +24,8 @@ export async function GET() {
       awaitingInputSessionIds: getAwaitingInputRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
       sessionUiStateRevision: getSessionUiStateRevision(),
+      closedProjectKeys: getClosedProjectKeys(),
+      closedProjectsRevision: getClosedProjectsRevision(),
     },
     { headers: { "Cache-Control": "no-store" } },
   );
