@@ -1,6 +1,6 @@
 ---
 plan: sidebar-close-project
-status: approved
+status: done
 current: done
 ---
 
@@ -53,6 +53,7 @@ current: done
 - 依赖: T3、T4
 - 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 passed，1 skipped）。A2/A5 的手工浏览器步骤留给 reviewer（菜单项在有运行/等待会话时 disabled + 右侧原因；关闭当前项目时按 default-cwd → 首个非关闭项目最新会话 → 默认目录空输入框的顺序迁移，409 时 toast 且 cwd 停在已迁到的地方）。
 - 复盘修正（关闭校验共用同一规则）：`sendProjectClosed()` 把响应的 `reason` 带出来，`closeProject()` 按 `awaiting` / `running` toast `sidebar.closeProjectBlockedAwaiting` / `sidebar.closeProjectBlockedRunning`，其余失败（网络、500、400）才用 `sidebar.closeProjectFailed` + `{ error }`；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
+- 验收（评审）：A5 的浏览器步骤（关闭当前项目看三级兜底、文件/终端 Tab 驻留）待用户在重启后的 dev server 上确认；代码侧由 `moveCwdOutOfProject()` 的顺序与 T4/T5 的检查覆盖。
 
 ## T6 重新打开：变成当前项目即解除关闭  - [x]
 
@@ -62,6 +63,7 @@ current: done
 - 验证: 手工 A4、A7；`node_modules/.bin/tsc --noEmit`。
 - 依赖: T1、T4、T5
 - 验证记录: `node --experimental-strip-types --test lib/new-session-context.test.mjs` 12 pass / 0 fail（新增 1 个用例：closedProjectKeys 进上下文签名并由 contextForCwd 带下去）；`npm test` exit 0（2789 tests，2788 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。A4/A7 的浏览器步骤留给 reviewer。
+- 验收（评审）：A4 由 `lib/session-tree.test.mjs`（已关闭的置顶项目/置顶 family 不回流，且不动置顶标记）覆盖；A7 的四条重开路径待用户在浏览器确认，纯函数侧由“当前项目不隐藏”与选择器标记测试覆盖。
 
 ## T7 三语种文案  - [x]
 
