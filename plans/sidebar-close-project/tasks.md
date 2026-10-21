@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T5
+current: T6
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -42,14 +42,14 @@ current: T5
 - 依赖: T1、T2
 - 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）。手工两标签页验证留给 reviewer（见交付说明）：轮询只读 `closedProjectsRevision`，集合变化不调 `loadSessions`，`sessionListVersion` 不变。
 
-## T5 分组菜单"关闭项目" + 当前项目的 cwd 迁移  - [ ]
+## T5 分组菜单"关闭项目" + 当前项目的 cwd 迁移  - [x]
 
 - 结果: 分组菜单出现"关闭项目"（会话操作组之前）；有会话运行/等待时禁用并在右侧显示原因；点击后项目消失；若被关的是当前项目，先按 D6 的三级兜底切走 cwd 再关，失败（409）时 toast 且不改变已切走的 cwd；关闭后该项目的文件/终端 Tab 按普通项目切换驻留。
 - 假设: `groupMenuItems()` 是分组菜单的唯一构造点；`handleDefaultCwd` / `commitCustomPath` / `handleSelectSessionFromList` 都在同一组件内可直接复用；`showToast()` 是既有提示通道。
 - 约束: D3、D6、D9。
 - 验证: `node_modules/.bin/tsc --noEmit`；手工 A2、A5 两条验收步骤。
 - 依赖: T3、T4
-- 验证记录:
+- 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 passed，1 skipped）。A2/A5 的手工浏览器步骤留给 reviewer（菜单项在有运行/等待会话时 disabled + 右侧原因；关闭当前项目时按 default-cwd → 首个非关闭项目最新会话 → 默认目录空输入框的顺序迁移，409 时 toast 且 cwd 停在已迁到的地方）。
 
 ## T6 重新打开：变成当前项目即解除关闭  - [ ]
 

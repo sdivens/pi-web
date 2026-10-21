@@ -49,6 +49,7 @@ import {
 import {
   deleteProjectSessions,
   forkFailureMessage,
+  projectCloseBlock,
   projectNameMenuEntries,
   projectRenameRequest,
   sessionMenuEntries,
@@ -96,6 +97,7 @@ import {
   ChangesIcon,
   CheckIcon,
   ChevronIcon,
+  CloseIcon,
   DotIcon,
   DotOutlineIcon,
   EyeIcon,
@@ -921,6 +923,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setClosedProjectKeys((previous) => sameIdsOr(previous, keys));
   }, []);
 
+  // The project being closed right now, until its POST answers. Its cwd
+  // migration passes through other projects, and any of those steps (or the
+  // shell's own restore) could make this key current again: closing would be
+  // undone by its own reopening rule (D9).
+  const closingProjectKeyRef = useRef<string | null>(null);
+
+  /** POST /api/projects/closed for one project and of this window's own doing. */
+  const sendProjectClosed = useCallback(async (projectKey: string, closed: boolean): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch("/api/projects/closed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectKey, closed }),
+      });
+      const data = await res.json().catch(() => ({})) as { closedProjectKeys?: string[]; revision?: number; error?: string };
+      if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+      // Applied at once, so the set does not wait for the next poll.
+      applyClosedProjects(data.closedProjectKeys, data.revision);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [applyClosedProjects]);
+
+
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1192,13 +1219,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     : undefined;
   const currentWorktreePath = currentWorktree?.path ?? null;
 
-  // `purpose`: who asked, the folder picker's opener by default ("Use default directory" names its own).
-  const commitCustomPath = useCallback(async (candidate?: string, { remember = true, purpose = customPathOpen } = {}) => {
-    const path = (candidate ?? customPathValue).trim();
-    if (!path || customPathValidating) return;
-
-    setCustomPathValidating(true);
-    setCustomPathError(null);
+  /**
+   * POST /api/cwd/validate: the server's canonical path and the project
+   * identity it resolves, or why it refused. Where a folder becomes the cwd
+   * goes through here, so a key is never guessed from a typed path.
+   */
+  const validateCwdPath = useCallback(async (path: string): Promise<{ cwd: string; root: string; key: string } | { error: string }> => {
     try {
       const res = await fetch("/api/cwd/validate", {
         method: "POST",
@@ -1212,12 +1238,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         error?: string;
       };
       if (!res.ok || data.error || !data.cwd || !data.projectRoot || !data.projectKey) {
-        setCustomPathError(data.error ?? `HTTP ${res.status}`);
+        return { error: data.error ?? `HTTP ${res.status}` };
+      }
+      return { cwd: data.cwd, root: data.projectRoot, key: data.projectKey };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  }, []);
+
+  // `purpose`: who asked, the folder picker's opener by default ("Use default directory" names its own).
+  const commitCustomPath = useCallback(async (candidate?: string, { remember = true, purpose = customPathOpen } = {}) => {
+    const path = (candidate ?? customPathValue).trim();
+    if (!path || customPathValidating) return;
+
+    setCustomPathValidating(true);
+    setCustomPathError(null);
+    try {
+      const validated = await validateCwdPath(path);
+      if ("error" in validated) {
+        setCustomPathError(validated.error);
         return;
       }
       if (remember) {
-        saveLastCustomCwd(data.cwd);
-        setCustomPathValue(data.cwd);
+        saveLastCustomCwd(validated.cwd);
+        setCustomPathValue(validated.cwd);
       }
       setCustomPathOpen(false);
       if (purpose === "new-session") {
@@ -1227,23 +1271,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         const opener = folderReturnFocusRef.current;
         folderPickRef.current = null;
         folderReturnFocusRef.current = null;
-        pick?.({ cwd: data.cwd, projectKey: data.projectKey, projectRoot: data.projectRoot });
+        pick?.({ cwd: validated.cwd, projectKey: validated.key, projectRoot: validated.root });
         // Not moved (the folder in use): the bar's control takes focus back.
         focusAfterCommit(() => (opener?.isConnected ? opener : null));
         return;
       }
       setValidatedProject({
-        cwd: data.cwd,
-        root: data.projectRoot,
-        key: data.projectKey,
+        cwd: validated.cwd,
+        root: validated.root,
+        key: validated.key,
       });
-      setSelectedCwd(data.cwd);
+      setSelectedCwd(validated.cwd);
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit]);
+  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit, validateCwdPath]);
 
   const handleCustomPathClick = useCallback(() => {
     setCustomPathOpen("files");
@@ -2331,6 +2375,64 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     else filesPickerRef.current?.button("project")?.focus({ preventScroll: true });
   }, [filesShown, filesFocusRequest]);
 
+  /**
+   * Where a closing current project leaves the cwd (D6), resolved and applied
+   * before the close: the dated default folder when it is another project, else
+   * the newest session of the first project that stays (group order, live
+   * families only), else the default folder with a fresh composer. Applied
+   * first so the group being closed never paints as the current one again.
+   */
+  const moveCwdOutOfProject = useCallback(async (closingKey: string) => {
+    let defaultCwd: string | null = null;
+    try {
+      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const data = await res.json() as { cwd?: string };
+      defaultCwd = data.cwd ?? null;
+      if (defaultCwd) {
+        const validated = await validateCwdPath(defaultCwd);
+        // Today's default folder may be the project being closed: no way out.
+        if (!("error" in validated) && validated.key !== closingKey) {
+          setValidatedProject({ cwd: validated.cwd, root: validated.root, key: validated.key });
+          setSelectedCwd(validated.cwd);
+          return;
+        }
+      }
+    } catch {
+      // Down to the next level: a session of a project that stays.
+    }
+
+    for (const project of model.projects) {
+      if (project.key === closingKey || closedProjectKeys.has(project.key)) continue;
+      // Newest first, and only what the tree shows there.
+      const family = sessionFamilies.find((item) => workspaceKeyOf(item.root) === project.key && !isFamilyArchived(item, uiState, runningSessionIds));
+      if (!family) continue;
+      handleSelectSessionFromList(family.root);
+      return;
+    }
+
+    // Nothing to land on: the default folder and an empty composer.
+    if (defaultCwd) setSelectedCwd(defaultCwd);
+  }, [closedProjectKeys, handleSelectSessionFromList, model.projects, runningSessionIds, sessionFamilies, uiState, validateCwdPath]);
+
+  /**
+   * A group menu's "Close project": the group and its sessions leave the tree
+   * and the archive view, and no session file is touched (D1). Refused while a
+   * session of it runs or waits for input (the menu says so, the server has
+   * the last word, D3); a refusal is toasted and leaves the cwd where the
+   * migration put it.
+   */
+  const closeProject = useCallback(async (project: SidebarProject) => {
+    setMenu(null);
+    closingProjectKeyRef.current = project.key;
+    try {
+      if (project.current) await moveCwdOutOfProject(project.key);
+      const result = await sendProjectClosed(project.key, true);
+      if (!result.ok) showToast(t("sidebar.closeProjectFailed", { error: result.error ?? "" }));
+    } finally {
+      closingProjectKeyRef.current = null;
+    }
+  }, [moveCwdOutOfProject, sendProjectClosed, showToast, t]);
+
   const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status).map((entry, index) => {
     if (entry.kind === "separator") return { type: "separator", id: `separator-${index}` };
     const label = t(SESSION_ACTION_LABEL_KEYS[entry.id]);
@@ -2350,6 +2452,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const groupMenuItems = (project: SidebarProject, olderCount: number): SidebarMenuItem[] => {
     const archivedCount = archiveIndex.countByProject.get(project.key) ?? 0;
     const deletable = familiesToDelete(treeSelectionInput, project.key);
+    const closeBlock = projectCloseBlock(treeSelectionInput, project.key);
     // Within the project's band; disabled at its edges.
     const up = adjacentProjectMove(model.projects, project.key, "up");
     const down = adjacentProjectMove(model.projects, project.key, "down");
@@ -2425,6 +2528,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         icon: <ChevronIcon className="sidebar-icon-down" />,
         disabled: model.projects.every((other) => isGroupExpanded(other, shownGroupExpansion)),
         onSelect: () => setAllGroupsExpanded(() => true),
+      },
+      {
+        // Out of the tree without a file touched; the sessions come back the
+        // moment the project does (picking it, one of its sessions, a link).
+        // Refused while one of them runs or waits for input: it would show
+        // again at once, and a waiting dialog must not go hidden.
+        type: "item",
+        id: "close-project",
+        label: t("sidebar.closeProject"),
+        icon: <CloseIcon />,
+        disabled: closeBlock.blocked,
+        disabledReason: closeBlock.blocked
+          ? t(closeBlock.reason === "awaiting" ? "sidebar.closeProjectBlockedAwaiting" : "sidebar.closeProjectBlockedRunning")
+          : undefined,
+        onSelect: () => { void closeProject(project); },
       },
       { type: "separator", id: "separator-sessions" },
       {
