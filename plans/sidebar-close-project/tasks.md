@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T2
+current: T3
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -15,14 +15,14 @@ current: T2
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/project-closed.test.mjs` 5 pass / 0 fail；`npm test` exit 0（2783 tests，2782 pass，1 skipped，0 fail）；`node_modules/.bin/tsc --noEmit` 干净。
 
-## T2 会话树与归档视图的关闭过滤（纯函数）  - [ ]
+## T2 会话树与归档视图的关闭过滤（纯函数）  - [x]
 
 - 结果: 传了 `closedProjectKeys` 后，关闭且无运行/等待成员的项目不出现在 `buildSessionTree().rows`、`projects`、`archivedCount` 与 `buildArchiveRows()` 里；同样条件下的置顶项目/置顶 family 也不回流；一旦该 key 下有成员进入 `runningIds` 或 `awaitingIds`，它立刻按原顺序、原置顶状态回来，跑完再次消失。不传 `closedProjectKeys` 时行为与今天完全一致。
 - 假设: `listSessionFamilies()` 在 `buildSessionTree` 开头已经算过一次，可以复用来求"忙碌的项目 key"；`SidebarRow` 的 `group` 变体不需要新增字段。
 - 约束: D4、D5、D7。
 - 验证: 扩展 `lib/session-tree.test.mjs`（正常项、置顶项、归档项、running 回流、awaiting 回流、`closedProjectKeys` 缺省不回归）；`node_modules/.bin/tsc --noEmit`。
 - 依赖: 无
-- 验证记录:
+- 验证记录: `node --experimental-strip-types --test lib/session-tree.test.mjs` 54 pass / 0 fail（新增 3 个用例）；`node_modules/.bin/tsc --noEmit` 干净。
 
 ## T3 关闭资格判定（纯函数）  - [ ]
 
