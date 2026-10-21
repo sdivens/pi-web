@@ -928,6 +928,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // shell's own restore) could make this key current again: closing would be
   // undone by its own reopening rule (D9).
   const closingProjectKeyRef = useRef<string | null>(null);
+  // The closed set the callbacks below read without being rebuilt on every
+  // change of it.
+  const closedProjectKeysRef = useRef(closedProjectKeys);
+  closedProjectKeysRef.current = closedProjectKeys;
 
   /** POST /api/projects/closed for one project and of this window's own doing. */
   const sendProjectClosed = useCallback(async (projectKey: string, closed: boolean): Promise<{ ok: boolean; error?: string }> => {
@@ -947,6 +951,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [applyClosedProjects]);
 
+  /**
+   * Brings a closed project back (D9): every way of making a project current
+   * reopens it, so the tree, its place in the order, its name and its pin are
+   * as they were. Nothing to do for one that is not closed, and never for the
+   * one being closed right now: its own migration passes through other
+   * projects and its answer lands after them (closingProjectKeyRef).
+   */
+  const reopenIfClosed = useCallback((projectKey: string | null | undefined) => {
+    if (!projectKey || projectKey === closingProjectKeyRef.current) return;
+    if (!closedProjectKeysRef.current.has(projectKey)) return;
+    // Best effort, and quiet: the project simply stays hidden if it fails,
+    // which is what the user sees now; a refused close says why in its toast.
+    void sendProjectClosed(projectKey, false);
+  }, [sendProjectClosed]);
 
   useEffect(() => {
     let stopped = false;
@@ -1282,12 +1300,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         key: validated.key,
       });
       setSelectedCwd(validated.cwd);
+      // Opened by hand or from the project list: a closed project comes back.
+      reopenIfClosed(validated.key);
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit, validateCwdPath]);
+  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit, reopenIfClosed, validateCwdPath]);
 
   const handleCustomPathClick = useCallback(() => {
     setCustomPathOpen("files");
@@ -1362,7 +1382,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const handleFilesPick = useCallback(({ cwd, projectKey, projectRoot }: NewSessionTarget) => {
     if (projectKey && projectRoot) setValidatedProject({ cwd, root: projectRoot, key: projectKey });
     setSelectedCwd(cwd);
-  }, []);
+    reopenIfClosed(projectKey);
+  }, [reopenIfClosed]);
 
   // Clicking a session moves the effective cwd to that session's worktree.
   // Done on the click path (not via the selectedCwd prop sync) so it also
@@ -1371,8 +1392,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setAllSessions((current) => current.some((session) => session.id === s.id) ? current : [s, ...current]);
     if (s.cwd) setSelectedCwd(s.cwd);
+    // A search hit, a link's session: its project shows again.
+    reopenIfClosed(workspaceKeyOf(s));
     onSelectSession(s, false, entryId, blockIndex, options);
-  }, [onSelectSession]);
+  }, [onSelectSession, reopenIfClosed]);
 
   // Every "new session" goes through here. The cwd moves first, on the click
   // path like a session pick, and the shell gets the target's project so it
@@ -1382,8 +1405,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     // A worktree without sessions has no other source of identity yet.
     if (projectKey && projectRoot) setValidatedProject({ cwd, root: projectRoot, key: projectKey });
     setSelectedCwd(cwd);
+    // A new session in a closed project opens it: it has something to show.
+    reopenIfClosed(projectKey);
     onNewSession?.(createTempSessionId(), cwd, projectKey, carryComposer ? { carryComposer: true } : undefined);
-  }, [onNewSession]);
+  }, [onNewSession, reopenIfClosed]);
   // The handle below is made once: it calls the newest closure.
   const startNewSessionInRef = useRef(startNewSessionIn);
   startNewSessionInRef.current = startNewSessionIn;
@@ -1480,6 +1505,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     () => (currentProjectKey && currentProjectRoot ? { key: currentProjectKey, root: currentProjectRoot } : null),
     [currentProjectKey, currentProjectRoot],
   );
+  // The paths above cover the clicks; this one covers becoming current any
+  // other way (a session link, a restored cwd, the shell's own moves): a
+  // project that is current is open again (D9).
+  useEffect(() => {
+    reopenIfClosed(currentProjectKey);
+  }, [currentProjectKey, reopenIfClosed]);
   // What the tree shows and every toggle reads: the saved choices over the
   // groups kept open for the page. Writes go to the saved choices alone
   // (saveGroupChoices).
@@ -1573,8 +1604,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       worktrees: listed ? worktreeState.worktrees.map(({ path, branch, isMain }) => ({ path, branch, isMain })) : null,
       currentWorktreePath: listed ? currentWorktreePath : null,
       projects: projectChoiceList,
+      closedProjectKeys: [...closedProjectKeys],
     };
-  }, [selectedCwd, selectedProject, showWorktreeSwitcher, worktreeState, currentWorktreePath, projectChoiceList, projectNames]);
+  }, [selectedCwd, selectedProject, showWorktreeSwitcher, worktreeState, currentWorktreePath, projectChoiceList, projectNames, closedProjectKeys]);
   const newSessionContextRef = useRef(newSessionContext);
   newSessionContextRef.current = newSessionContext;
   const newSessionContextSignature = newSessionContextKey(newSessionContext);
@@ -3227,7 +3259,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <ProjectWorktreePicker
               handleRef={filesPickerRef}
               layout={stacked ? "row" : "stacked"}
-              context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
+              context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList, closedProjectKeys: [...closedProjectKeys] }}
               mobile={isMobile}
               label={t("sidebar.projectAndWorktree")}
               placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}

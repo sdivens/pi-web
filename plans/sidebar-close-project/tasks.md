@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T6
+current: T8
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -51,14 +51,14 @@ current: T6
 - 依赖: T3、T4
 - 验证记录: `node_modules/.bin/tsc --noEmit` 干净；`npm run lint` 干净；`npm test` exit 0（2788 tests，2787 passed，1 skipped）。A2/A5 的手工浏览器步骤留给 reviewer（菜单项在有运行/等待会话时 disabled + 右侧原因；关闭当前项目时按 default-cwd → 首个非关闭项目最新会话 → 默认目录空输入框的顺序迁移，409 时 toast 且 cwd 停在已迁到的地方）。
 
-## T6 重新打开：变成当前项目即解除关闭  - [ ]
+## T6 重新打开：变成当前项目即解除关闭  - [x]
 
 - 结果: 在项目列表选中被关闭的项目、点击它的会话、用 `?cwd=`/`?session=` 深链、在其中新建会话，四种路径都解除关闭并让项目回到原位置/名字/置顶；关闭当前项目的动作不会把自己立刻重开（`closingKeyRef` 生效）。项目列表里被关闭的项目仍在，并显示"已关闭"标记。
 - 假设: `handleFilesPick` / `commitCustomPath`（files 分支）/ `handleSelectSessionFromList` / `startNewSessionIn` 覆盖了绝大多数"变成当前项目"的路径，剩下的由 `currentProjectKey` 变化的 effect 兜住。
 - 约束: D9、D10。
 - 验证: 手工 A4、A7；`node_modules/.bin/tsc --noEmit`。
 - 依赖: T1、T4、T5
-- 验证记录:
+- 验证记录: `node --experimental-strip-types --test lib/new-session-context.test.mjs` 12 pass / 0 fail（新增 1 个用例：closedProjectKeys 进上下文签名并由 contextForCwd 带下去）；`npm test` exit 0（2789 tests，2788 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。A4/A7 的浏览器步骤留给 reviewer。
 
 ## T7 三语种文案  - [x]
 

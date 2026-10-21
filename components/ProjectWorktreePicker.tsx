@@ -354,24 +354,33 @@ export function ProjectWorktreePicker({
   };
 
   const projectItems = (): SidebarMenuItem[] => {
+    // A closed project stays in the list, marked: its group is gone from the
+    // tree, and this row is how it comes back (picking it reopens it).
+    const closedKeys = new Set(context.closedProjectKeys);
     const choices = describeProjectChoices(projectChoices(context)).map(({ choice, name, note }): SidebarMenuItem => {
       const activity = projectActivity?.get(choice.key);
       // A desktop shows the whole path, unless the user named the project:
       // then that name alone, in the same code type; the tooltip keeps the path.
       const wholePath = classic && choice.alias === undefined;
+      const closedNote = closedKeys.has(choice.key) ? t("sidebar.closedProject") : undefined;
       return {
         type: "item",
         id: `project:${choice.key}`,
         label: wholePath ? displayPath(choice.root, homeDir) : name,
-        note: wholePath ? undefined : note ?? undefined,
+        // "Closed" takes the note's place: it is what picking the row changes.
+        note: closedNote ?? (wholePath ? undefined : note ?? undefined),
         mono: classic,
         path: wholePath,
         title: choice.root,
         checked: choice.key === project?.key,
         badge: activity ? <ActivitySummary running={activity.running} unread={activity.unread} t={t} /> : undefined,
-        // The owners ignore a pick of the folder already in use.
+        // The owners ignore a pick of the folder already in use, save one:
+        // a closed project is picked even where it already is, since picking
+        // it is what reopens it.
         onSelect: () => {
-          if (choice.key !== project?.key || !worktrees) onPick({ cwd: choice.root, projectKey: choice.key, projectRoot: choice.root }, "project");
+          if (choice.key !== project?.key || !worktrees || closedNote !== undefined) {
+            onPick({ cwd: choice.root, projectKey: choice.key, projectRoot: choice.root }, "project");
+          }
         },
       };
     });

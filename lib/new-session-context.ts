@@ -54,6 +54,12 @@ export interface NewSessionContext {
   currentWorktreePath: string | null;
   /** Every project the sidebar knows, in its group order. */
   projects: readonly ProjectChoice[];
+  /**
+   * The projects closed in this process (lib/project-closed.ts). Their rows
+   * stay in the list, marked, and picking one reopens it: the list is the only
+   * way back for a project with nothing pinned or live to show.
+   */
+  closedProjectKeys?: readonly string[];
 }
 
 /**
@@ -120,6 +126,8 @@ export function contextForCwd(
     worktrees: null,
     currentWorktreePath: null,
     projects,
+    // The project list is the one the sidebar reported: so is what it marks.
+    ...(context?.closedProjectKeys ? { closedProjectKeys: context.closedProjectKeys } : {}),
   };
 }
 
@@ -244,5 +252,6 @@ export function newSessionContextKey(context: NewSessionContext | null): string 
     context.currentWorktreePath,
     context.worktrees?.map((worktree) => [worktree.path, worktree.branch, worktree.isMain]) ?? null,
     context.projects.map((project) => [project.key, project.root, project.alias ?? null]),
+    context.closedProjectKeys ?? null,
   ]);
 }
