@@ -2527,6 +2527,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         shortcut: "T",
         onSelect: () => openProjectInNewTab(project),
       },
+      {
+        // Out of the tree without a file touched; the sessions come back the
+        // moment the project does (picking it, one of its sessions, a link).
+        // Refused while one of them runs or waits for input: it would show
+        // again at once, and a waiting dialog must not go hidden.
+        type: "item",
+        id: "close-project",
+        label: t("sidebar.closeProject"),
+        icon: <CloseIcon />,
+        disabled: closeBlock.blocked,
+        disabledReason: closeBlock.blocked
+          ? t(closeBlock.reason === "awaiting" ? "sidebar.closeProjectBlockedAwaiting" : "sidebar.closeProjectBlockedRunning")
+          : undefined,
+        onSelect: () => { void closeProject(project); },
+      },
       { type: "separator", id: "separator-layout" },
       {
         type: "item",
@@ -2560,21 +2575,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         icon: <ChevronIcon className="sidebar-icon-down" />,
         disabled: model.projects.every((other) => isGroupExpanded(other, shownGroupExpansion)),
         onSelect: () => setAllGroupsExpanded(() => true),
-      },
-      {
-        // Out of the tree without a file touched; the sessions come back the
-        // moment the project does (picking it, one of its sessions, a link).
-        // Refused while one of them runs or waits for input: it would show
-        // again at once, and a waiting dialog must not go hidden.
-        type: "item",
-        id: "close-project",
-        label: t("sidebar.closeProject"),
-        icon: <CloseIcon />,
-        disabled: closeBlock.blocked,
-        disabledReason: closeBlock.blocked
-          ? t(closeBlock.reason === "awaiting" ? "sidebar.closeProjectBlockedAwaiting" : "sidebar.closeProjectBlockedRunning")
-          : undefined,
-        onSelect: () => { void closeProject(project); },
       },
       { type: "separator", id: "separator-sessions" },
       {

@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T8
+current: done
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -69,11 +69,11 @@ current: T8
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/i18n/registry.test.mjs` 3 pass / 0 fail（三语种键集与占位符一致）；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
 
-## T8 文档与文件地图  - [ ]
+## T8 文档与文件地图  - [x]
 
 - 结果: `docs/agents/sessions.md` 的侧栏小节多一段说明（关闭是进程内状态、四条重开路径、运行中回流、与置顶的优先级、cwd 迁移顺序）；`AGENTS.md` 的文件地图与 API 清单列出 `lib/project-closed.ts` 与 `app/api/projects/closed/route.ts`。
 - 假设: `docs/agents/sessions.md` 里侧栏小节的标题保持不变（"Session sidebar: project groups, pins and archive" 附近）。
 - 约束: D1、D4、D6、D9。
 - 验证: 读 diff，两处都只增不改既有结论。
 - 依赖: T1、T5
-- 验证记录:
+- 验证记录: 读 diff：`docs/agents/sessions.md` 侧栏小节只加了一段 bullet（并在 group ⋯ 菜单那段的项目组清单里加 "Close project"），`AGENTS.md` 的 API 清单/文件地图/Topic Notes 只增两行并补上述文字；`npm test` exit 0（2789 tests，2788 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。同一提交里把分组菜单的"关闭项目"从位置组末尾移到项目组（Open in new tab 之后），与文档描述的"three groups"一致。
