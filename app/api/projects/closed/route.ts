@@ -15,9 +15,11 @@ import { workspaceKeyOf } from "@/lib/workspace-memory";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/projects/closed - the closed projects of this process. The sidebar
-// reads them from its running poll (D8) and only asks here when it must know
-// before that poll, but the route answers on its own too.
+// GET /api/projects/closed - the closed projects of this process, on their
+// own. The sidebar never asks here: it takes the set from its 2.5s running
+// poll (which fires on mount anyway, so a read of its own would buy nothing,
+// D8) and from the answer to its own POST. This route answers the same state
+// for tools and tests.
 //
 // POST { projectKey, closed } - close (the default) or reopen one project.
 // Closing refuses a project with a session that runs or waits for input: the

@@ -89,7 +89,8 @@ export interface SessionTreeInput {
    * project whose families are all idle leaves the tree and the archive view;
    * one with a member running or waiting for input shows again until it is
    * idle, since hiding a dialog would leave it unseen (D4). Closing wins over
-   * pinning (D5): a closed pinned project's families go with it.
+   * pinning (D5): a closed pinned project's families go with it. Never the
+   * current project (hiddenClosedKeys): a project that is current is open.
    */
   closedProjectKeys?: ReadonlySet<string>;
 }
@@ -269,22 +270,34 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set<string>();
  * isFamilyArchived's "a running family never leaves the tree": a run started
  * after the project was closed brings the project back, and it hides again
  * once the run ends, the closing flag untouched.
+ *
+ * The current project is open too, closed or not (D9): a project that is the
+ * sidebar's cwd is open by definition, and its composer still sends there, so
+ * a group-less project would be a state the tree never has. Closing the
+ * current project migrates the cwd first (D6), which normally leaves it not
+ * current by the time the set arrives; the rule covers the two paths that
+ * cannot: another window closing a project this one has current (the reopen
+ * effect is keyed on a change of the current project and does not run), and
+ * the default folder being the project closed with nowhere to migrate to.
+ * Its archived families stay in the archive view for the same reason its
+ * group stays in the tree.
  */
 function hiddenClosedKeys(
   closedProjectKeys: ReadonlySet<string> | undefined,
   families: readonly SessionFamily[],
-  input: Pick<SessionTreeInput, "runningIds" | "awaitingIds">,
+  input: Pick<SessionTreeInput, "runningIds" | "awaitingIds" | "currentProject">,
 ): ReadonlySet<string> {
   const hidden = closedProjectKeys ?? EMPTY_KEYS;
   if (hidden.size === 0) return hidden;
+  const currentKey = input.currentProject?.key;
   const busy = new Set<string>();
   for (const family of families) {
     const key = familyProjectKey(family);
     if (!hidden.has(key) || busy.has(key)) continue;
     if (anyMemberIn(family, input.runningIds) || (input.awaitingIds && anyMemberIn(family, input.awaitingIds))) busy.add(key);
   }
-  if (busy.size === 0) return hidden;
-  return new Set([...hidden].filter((key) => !busy.has(key)));
+  if (busy.size === 0 && (currentKey === undefined || !hidden.has(currentKey))) return hidden;
+  return new Set([...hidden].filter((key) => key !== currentKey && !busy.has(key)));
 }
 
 /**
@@ -440,7 +453,8 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
   const families = listSessionFamilies(input.sessions);
   // Closed and idle projects are dropped before anything is collected from
   // them: no group, no pinned family, no archived count, and neither the
-  // current project nor a pinned project entry brings the key back.
+  // current project nor a pinned project entry brings the key back (the
+  // current one is never in the hidden set, so it keeps its group).
   const hiddenKeys = hiddenClosedKeys(input.closedProjectKeys, families, input);
   const resolver = createProjectResolver(uiState, currentProject);
 
@@ -609,7 +623,8 @@ export function buildArchiveRows(
   const flags: FamilyFlagsInput = input;
   const families = listSessionFamilies(input.sessions);
   // A closed project's archived families leave the archive view too (D5); a
-  // busy one keeps them, as it keeps its group in the tree.
+  // busy one keeps them, as it keeps its group in the tree, and so does the
+  // current one (hiddenClosedKeys).
   const hiddenKeys = hiddenClosedKeys(input.closedProjectKeys, families, input);
   const resolver = createProjectResolver(uiState, input.currentProject);
   const groups = new Map<string, { newest: number; families: { family: SessionFamily; archivedAt: number }[] }>();

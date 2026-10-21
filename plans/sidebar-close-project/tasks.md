@@ -23,6 +23,7 @@ current: done
 - 验证: 扩展 `lib/session-tree.test.mjs`（正常项、置顶项、归档项、running 回流、awaiting 回流、`closedProjectKeys` 缺省不回归）；`node_modules/.bin/tsc --noEmit`。
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/session-tree.test.mjs` 54 pass / 0 fail（新增 3 个用例）；`node_modules/.bin/tsc --noEmit` 干净。
+- 复盘修正（当前项目不隐藏）：`node --experimental-strip-types --test lib/session-tree.test.mjs` 55 pass / 0 fail（`closedCurrent` 断言改为独立用例：当前且已关闭 → 分组、归档族与计数都在；换一个 `currentProject` → 再次隐藏）；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
 
 ## T3 关闭资格判定（纯函数）  - [x]
 
@@ -77,3 +78,4 @@ current: done
 - 验证: 读 diff，两处都只增不改既有结论。
 - 依赖: T1、T5
 - 验证记录: 读 diff：`docs/agents/sessions.md` 侧栏小节只加了一段 bullet（并在 group ⋯ 菜单那段的项目组清单里加 "Close project"），`AGENTS.md` 的 API 清单/文件地图/Topic Notes 只增两行并补上述文字；`npm test` exit 0（2789 tests，2788 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。同一提交里把分组菜单的"关闭项目"从位置组末尾移到项目组（Open in new tab 之后），与文档描述的"three groups"一致。
+- 复盘修正：同一句不再声称"关闭的分组永远不会画成当前"，改为"关闭当前项目先迁 cwd；仍然当前（别处关闭、或无处可迁）则保留分组与归档族直到不再是当前"；`npm test` exit 0（2790 tests，2789 pass，1 skipped，0 fail）；`tsc --noEmit`、`npm run lint` 干净。
