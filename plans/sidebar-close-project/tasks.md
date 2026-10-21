@@ -1,7 +1,7 @@
 ---
 plan: sidebar-close-project
 status: approved
-current: T3
+current: T4
 ---
 
 # 任务清单 — 侧栏关闭项目（不删除会话）
@@ -24,14 +24,14 @@ current: T3
 - 依赖: 无
 - 验证记录: `node --experimental-strip-types --test lib/session-tree.test.mjs` 54 pass / 0 fail（新增 3 个用例）；`node_modules/.bin/tsc --noEmit` 干净。
 
-## T3 关闭资格判定（纯函数）  - [ ]
+## T3 关闭资格判定（纯函数）  - [x]
 
 - 结果: `projectCloseBlock()` 在该项目任一 family 成员处于 `runningIds` 或 `awaitingIds` 时返回 `{ blocked: true, reason }`（`awaiting` 优先），否则 `{ blocked: false }`；其他项目的运行状态不影响它。
 - 假设: `lib/sidebar-actions.ts` 已经是放置纯菜单/判定函数的既有位置，可新增导出而不改变现有导出。
 - 约束: D3。
 - 验证: 扩展 `lib/sidebar-actions.test.mjs`；`npm test`。
 - 依赖: 无
-- 验证记录:
+- 验证记录: `node --experimental-strip-types --test lib/sidebar-actions.test.mjs` 13 pass / 0 fail（新增 2 个用例）；`npm test` exit 0（2788 tests，2787 pass，1 skipped，0 fail）；`node_modules/.bin/tsc --noEmit`、`npm run lint` 干净。
 
 ## T4 侧栏接入关闭集合（轮询 + 建树入参）  - [ ]
 

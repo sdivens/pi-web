@@ -12,8 +12,10 @@
  * a project group's "Delete all sessions", with `fetch` passed in.
  */
 
-import { projectNameOf, type SidebarFamilyStatus, type SidebarProject, type SidebarRow } from "./session-tree";
+import { familyIds, projectNameOf, type SidebarFamilyStatus, type SidebarProject, type SidebarRow, type SessionTreeInput } from "./session-tree";
+import { listSessionFamilies } from "./session-family";
 import type { SessionUiStateRequest } from "./session-ui-state-shared";
+import { workspaceKeyOf } from "./workspace-memory";
 
 export type SessionMenuActionId =
   | "open-new-tab"
@@ -67,6 +69,31 @@ export function sessionMenuEntries(
     { kind: "separator" },
     { kind: "action", id: "delete", shortcut: "D" },
   ];
+}
+
+/**
+ * Whether a project can be closed right now. A closed project shows again
+ * while any of its sessions runs or waits for input (session-tree's
+ * hiddenClosedKeys), so closing one then would only flicker; the group menu
+ * disables the item with the reason, and POST /api/projects/closed refuses it
+ * too, since a run can start between the menu opening and the click. Waiting
+ * for input is the one the user is actually being asked about, so it wins
+ * over a merely running session.
+ */
+export function projectCloseBlock(
+  input: Pick<SessionTreeInput, "sessions" | "runningIds" | "awaitingIds">,
+  projectKey: string,
+): { blocked: false } | { blocked: true; reason: "awaiting" | "running" } {
+  let running = false;
+  for (const family of listSessionFamilies(input.sessions)) {
+    // A family's project is its root's: a subagent can sit in another cwd.
+    if (workspaceKeyOf(family.root) !== projectKey) continue;
+    for (const id of familyIds(family)) {
+      if (input.awaitingIds?.has(id)) return { blocked: true, reason: "awaiting" };
+      if (input.runningIds.has(id)) running = true;
+    }
+  }
+  return running ? { blocked: true, reason: "running" } : { blocked: false };
 }
 
 export type ProjectNameActionId = "rename-project" | "reset-project-name";
