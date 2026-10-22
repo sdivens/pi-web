@@ -49,9 +49,11 @@ import {
 import {
   deleteProjectSessions,
   forkFailureMessage,
+  projectCloseBlock,
   projectNameMenuEntries,
   projectRenameRequest,
   sessionMenuEntries,
+  type ProjectCloseBlockReason,
   type SessionMenuActionId,
 } from "@/lib/sidebar-actions";
 import { splitBeforeForkSuffix } from "@/lib/session-fork-name";
@@ -96,6 +98,7 @@ import {
   ChangesIcon,
   CheckIcon,
   ChevronIcon,
+  CloseIcon,
   DotIcon,
   DotOutlineIcon,
   EyeIcon,
@@ -545,6 +548,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [fileManagerError, setFileManagerError] = useState<string | null>(null);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [awaitingInputSessionIds, setAwaitingInputSessionIds] = useState<Set<string>>(() => new Set());
+  // Projects closed in this process (lib/project-closed.ts): their groups and
+  // their sessions leave the tree and the archive view until something makes
+  // them current again. The set comes with the running poll every window
+  // already reads, and from this window's own close/reopen answer.
+  const [closedProjectKeys, setClosedProjectKeys] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   const currentSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
@@ -552,6 +560,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Once polling has delivered a snapshot it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const runningPollAuthoritativeRef = useRef(false);
+  // The revision the closed set was taken at: a poll that repeats it changes
+  // nothing, so the tree is not rebuilt every 2.5 s. No render reads it.
+  const closedProjectsRevisionRef = useRef<number | null>(null);
   const detailsHydrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
@@ -898,6 +909,64 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  /**
+   * Takes a closed-projects snapshot, from the poll or from this window's own
+   * POST, once per revision: an unchanged one leaves the set (and every row
+   * built from it) alone. Not gated on "newer": a restarted process starts
+   * again at revision 0 with nothing closed, and that answer must be taken
+   * even though the page saw higher ones; a slower answer overtaking a newer
+   * one is corrected by the next poll.
+   */
+  const applyClosedProjects = useCallback((keys: string[] | undefined, revision: number | null | undefined) => {
+    if (!Array.isArray(keys) || typeof revision !== "number") return;
+    if (closedProjectsRevisionRef.current === revision) return;
+    closedProjectsRevisionRef.current = revision;
+    setClosedProjectKeys((previous) => sameIdsOr(previous, keys));
+  }, []);
+
+  // The project being closed right now, until its POST answers. Its cwd
+  // migration passes through other projects, and any of those steps (or the
+  // shell's own restore) could make this key current again: closing would be
+  // undone by its own reopening rule (D9).
+  const closingProjectKeyRef = useRef<string | null>(null);
+  // The closed set the callbacks below read without being rebuilt on every
+  // change of it.
+  const closedProjectKeysRef = useRef(closedProjectKeys);
+  closedProjectKeysRef.current = closedProjectKeys;
+
+  /** POST /api/projects/closed for one project and of this window's own doing. */
+  const sendProjectClosed = useCallback(async (projectKey: string, closed: boolean): Promise<{ ok: boolean; error?: string; reason?: ProjectCloseBlockReason }> => {
+    try {
+      const res = await fetch("/api/projects/closed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectKey, closed }),
+      });
+      const data = await res.json().catch(() => ({})) as { closedProjectKeys?: string[]; revision?: number; error?: string; reason?: ProjectCloseBlockReason };
+      if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}`, reason: data.reason };
+      // Applied at once, so the set does not wait for the next poll.
+      applyClosedProjects(data.closedProjectKeys, data.revision);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [applyClosedProjects]);
+
+  /**
+   * Brings a closed project back (D9): every way of making a project current
+   * reopens it, so the tree, its place in the order, its name and its pin are
+   * as they were. Nothing to do for one that is not closed, and never for the
+   * one being closed right now: its own migration passes through other
+   * projects and its answer lands after them (closingProjectKeyRef).
+   */
+  const reopenIfClosed = useCallback((projectKey: string | null | undefined) => {
+    if (!projectKey || projectKey === closingProjectKeyRef.current) return;
+    if (!closedProjectKeysRef.current.has(projectKey)) return;
+    // Best effort, and quiet: the project simply stays hidden if it fails,
+    // which is what the user sees now; a refused close says why in its toast.
+    void sendProjectClosed(projectKey, false);
+  }, [sendProjectClosed]);
+
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -931,6 +1000,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           awaitingInputSessionIds?: string[];
           completionNotificationSuppressedSessionIds?: string[];
           sessionUiStateRevision?: number | null;
+          closedProjectKeys?: string[];
+          closedProjectsRevision?: number;
         };
         if (stopped || controller !== current) return;
         runningPollAuthoritativeRef.current = true;
@@ -941,6 +1012,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setAwaitingInputSessionIds((previous) => sameIdsOr(previous, data.awaitingInputSessionIds ?? []));
         // Pins and archive changed in another window: reload them.
         noteUiRevision(data.sessionUiStateRevision);
+        // A project closed or reopened in another window.
+        applyClosedProjects(data.closedProjectKeys, data.closedProjectsRevision);
         if (data.sessionListVersion !== sessionListVersionRef.current) {
           // Reuse the invalidated cache; forcing a scan would change the version again.
           await loadSessions();
@@ -971,7 +1044,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadSessions, noteUiRevision]);
+  }, [applyClosedProjects, loadSessions, noteUiRevision]);
 
   useEffect(() => {
     onRunningSessionIdsChange?.(runningSessionIds);
@@ -1165,13 +1238,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     : undefined;
   const currentWorktreePath = currentWorktree?.path ?? null;
 
-  // `purpose`: who asked, the folder picker's opener by default ("Use default directory" names its own).
-  const commitCustomPath = useCallback(async (candidate?: string, { remember = true, purpose = customPathOpen } = {}) => {
-    const path = (candidate ?? customPathValue).trim();
-    if (!path || customPathValidating) return;
-
-    setCustomPathValidating(true);
-    setCustomPathError(null);
+  /**
+   * POST /api/cwd/validate: the server's canonical path and the project
+   * identity it resolves, or why it refused. Where a folder becomes the cwd
+   * goes through here, so a key is never guessed from a typed path.
+   */
+  const validateCwdPath = useCallback(async (path: string): Promise<{ cwd: string; root: string; key: string } | { error: string }> => {
     try {
       const res = await fetch("/api/cwd/validate", {
         method: "POST",
@@ -1185,12 +1257,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         error?: string;
       };
       if (!res.ok || data.error || !data.cwd || !data.projectRoot || !data.projectKey) {
-        setCustomPathError(data.error ?? `HTTP ${res.status}`);
+        return { error: data.error ?? `HTTP ${res.status}` };
+      }
+      return { cwd: data.cwd, root: data.projectRoot, key: data.projectKey };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  }, []);
+
+  // `purpose`: who asked, the folder picker's opener by default ("Use default directory" names its own).
+  const commitCustomPath = useCallback(async (candidate?: string, { remember = true, purpose = customPathOpen } = {}) => {
+    const path = (candidate ?? customPathValue).trim();
+    if (!path || customPathValidating) return;
+
+    setCustomPathValidating(true);
+    setCustomPathError(null);
+    try {
+      const validated = await validateCwdPath(path);
+      if ("error" in validated) {
+        setCustomPathError(validated.error);
         return;
       }
       if (remember) {
-        saveLastCustomCwd(data.cwd);
-        setCustomPathValue(data.cwd);
+        saveLastCustomCwd(validated.cwd);
+        setCustomPathValue(validated.cwd);
       }
       setCustomPathOpen(false);
       if (purpose === "new-session") {
@@ -1200,23 +1290,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         const opener = folderReturnFocusRef.current;
         folderPickRef.current = null;
         folderReturnFocusRef.current = null;
-        pick?.({ cwd: data.cwd, projectKey: data.projectKey, projectRoot: data.projectRoot });
+        pick?.({ cwd: validated.cwd, projectKey: validated.key, projectRoot: validated.root });
         // Not moved (the folder in use): the bar's control takes focus back.
         focusAfterCommit(() => (opener?.isConnected ? opener : null));
         return;
       }
       setValidatedProject({
-        cwd: data.cwd,
-        root: data.projectRoot,
-        key: data.projectKey,
+        cwd: validated.cwd,
+        root: validated.root,
+        key: validated.key,
       });
-      setSelectedCwd(data.cwd);
+      setSelectedCwd(validated.cwd);
+      // Opened by hand or from the project list: a closed project comes back.
+      reopenIfClosed(validated.key);
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit]);
+  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit, reopenIfClosed, validateCwdPath]);
 
   const handleCustomPathClick = useCallback(() => {
     setCustomPathOpen("files");
@@ -1291,7 +1383,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const handleFilesPick = useCallback(({ cwd, projectKey, projectRoot }: NewSessionTarget) => {
     if (projectKey && projectRoot) setValidatedProject({ cwd, root: projectRoot, key: projectKey });
     setSelectedCwd(cwd);
-  }, []);
+    reopenIfClosed(projectKey);
+  }, [reopenIfClosed]);
 
   // Clicking a session moves the effective cwd to that session's worktree.
   // Done on the click path (not via the selectedCwd prop sync) so it also
@@ -1300,8 +1393,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setAllSessions((current) => current.some((session) => session.id === s.id) ? current : [s, ...current]);
     if (s.cwd) setSelectedCwd(s.cwd);
+    // A search hit, a link's session: its project shows again.
+    reopenIfClosed(workspaceKeyOf(s));
     onSelectSession(s, false, entryId, blockIndex, options);
-  }, [onSelectSession]);
+  }, [onSelectSession, reopenIfClosed]);
 
   // Every "new session" goes through here. The cwd moves first, on the click
   // path like a session pick, and the shell gets the target's project so it
@@ -1311,8 +1406,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     // A worktree without sessions has no other source of identity yet.
     if (projectKey && projectRoot) setValidatedProject({ cwd, root: projectRoot, key: projectKey });
     setSelectedCwd(cwd);
+    // A new session in a closed project opens it: it has something to show.
+    reopenIfClosed(projectKey);
     onNewSession?.(createTempSessionId(), cwd, projectKey, carryComposer ? { carryComposer: true } : undefined);
-  }, [onNewSession]);
+  }, [onNewSession, reopenIfClosed]);
   // The handle below is made once: it calls the newest closure.
   const startNewSessionInRef = useRef(startNewSessionIn);
   startNewSessionInRef.current = startNewSessionIn;
@@ -1409,6 +1506,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     () => (currentProjectKey && currentProjectRoot ? { key: currentProjectKey, root: currentProjectRoot } : null),
     [currentProjectKey, currentProjectRoot],
   );
+  // The paths above cover the clicks; this one covers becoming current any
+  // other way (a session link, a restored cwd, the shell's own moves): a
+  // project that is current is open again (D9).
+  useEffect(() => {
+    reopenIfClosed(currentProjectKey);
+  }, [currentProjectKey, reopenIfClosed]);
   // What the tree shows and every toggle reads: the saved choices over the
   // groups kept open for the page. Writes go to the saved choices alone
   // (saveGroupChoices).
@@ -1427,7 +1530,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     groupExpansion: shownGroupExpansion,
     moreShown,
     pinnedCollapsed,
-  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed]);
+    closedProjectKeys,
+  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed, closedProjectKeys]);
   // Built while the archive view is rendered, its way out included: it
   // leaves as it was, not empty.
   const archiveMounted = archiveMotion.archiveMounted;
@@ -1441,7 +1545,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     selectedSessionId,
     currentProject,
     collapsed: archiveCollapsedSet,
-  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet]);
+    closedProjectKeys,
+  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet, closedProjectKeys]);
   // The archive's projects, top to bottom, folded or not.
   const archiveGroups = useMemo(
     () => archiveRows.flatMap((row) => (row.kind === "archive-group" ? [row] : [])),
@@ -1500,8 +1605,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       worktrees: listed ? worktreeState.worktrees.map(({ path, branch, isMain }) => ({ path, branch, isMain })) : null,
       currentWorktreePath: listed ? currentWorktreePath : null,
       projects: projectChoiceList,
+      closedProjectKeys: [...closedProjectKeys],
     };
-  }, [selectedCwd, selectedProject, showWorktreeSwitcher, worktreeState, currentWorktreePath, projectChoiceList, projectNames]);
+  }, [selectedCwd, selectedProject, showWorktreeSwitcher, worktreeState, currentWorktreePath, projectChoiceList, projectNames, closedProjectKeys]);
   const newSessionContextRef = useRef(newSessionContext);
   newSessionContextRef.current = newSessionContext;
   const newSessionContextSignature = newSessionContextKey(newSessionContext);
@@ -2302,6 +2408,73 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     else filesPickerRef.current?.button("project")?.focus({ preventScroll: true });
   }, [filesShown, filesFocusRequest]);
 
+  /**
+   * Where a closing current project leaves the cwd (D6), resolved and applied
+   * before the close: the dated default folder when it is another project, else
+   * the newest session of the first project that stays (group order, live
+   * families only), else the default folder with a fresh composer. Applied
+   * first so the group being closed never paints as the current one again.
+   */
+  const moveCwdOutOfProject = useCallback(async (closingKey: string) => {
+    let defaultCwd: string | null = null;
+    try {
+      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const data = await res.json() as { cwd?: string };
+      defaultCwd = data.cwd ?? null;
+      if (defaultCwd) {
+        const validated = await validateCwdPath(defaultCwd);
+        // Today's default folder may be the project being closed: no way out.
+        if (!("error" in validated) && validated.key !== closingKey) {
+          setValidatedProject({ cwd: validated.cwd, root: validated.root, key: validated.key });
+          setSelectedCwd(validated.cwd);
+          return;
+        }
+      }
+    } catch {
+      // Down to the next level: a session of a project that stays.
+    }
+
+    for (const project of model.projects) {
+      if (project.key === closingKey || closedProjectKeys.has(project.key)) continue;
+      // Newest first, and only what the tree shows there.
+      const family = sessionFamilies.find((item) => workspaceKeyOf(item.root) === project.key && !isFamilyArchived(item, uiState, runningSessionIds));
+      if (!family) continue;
+      handleSelectSessionFromList(family.root);
+      return;
+    }
+
+    // Nothing to land on: the default folder and an empty composer.
+    if (defaultCwd) setSelectedCwd(defaultCwd);
+  }, [closedProjectKeys, handleSelectSessionFromList, model.projects, runningSessionIds, sessionFamilies, uiState, validateCwdPath]);
+
+  /**
+   * A group menu's "Close project": the group and its sessions leave the tree
+   * and the archive view, and no session file is touched (D1). Refused while a
+   * session of it runs or waits for input (the menu says so, the server has
+   * the last word, D3); a refusal is toasted and leaves the cwd where the
+   * migration put it.
+   */
+  const closeProject = useCallback(async (project: SidebarProject) => {
+    setMenu(null);
+    closingProjectKeyRef.current = project.key;
+    try {
+      if (project.current) await moveCwdOutOfProject(project.key);
+      const result = await sendProjectClosed(project.key, true);
+      if (!result.ok) {
+        // A refusal names which of the two the menu would have said, in the
+        // user's language; anything else (network, 500, 400) says what happened.
+        const key = result.reason === "awaiting"
+          ? "sidebar.closeProjectBlockedAwaiting"
+          : result.reason === "running"
+            ? "sidebar.closeProjectBlockedRunning"
+            : "sidebar.closeProjectFailed";
+        showToast(t(key, { error: result.error ?? "" }));
+      }
+    } finally {
+      closingProjectKeyRef.current = null;
+    }
+  }, [moveCwdOutOfProject, sendProjectClosed, showToast, t]);
+
   const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status).map((entry, index) => {
     if (entry.kind === "separator") return { type: "separator", id: `separator-${index}` };
     const label = t(SESSION_ACTION_LABEL_KEYS[entry.id]);
@@ -2321,6 +2494,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const groupMenuItems = (project: SidebarProject, olderCount: number): SidebarMenuItem[] => {
     const archivedCount = archiveIndex.countByProject.get(project.key) ?? 0;
     const deletable = familiesToDelete(treeSelectionInput, project.key);
+    const closeBlock = projectCloseBlock(treeSelectionInput, project.key);
     // Within the project's band; disabled at its edges.
     const up = adjacentProjectMove(model.projects, project.key, "up");
     const down = adjacentProjectMove(model.projects, project.key, "down");
@@ -2362,6 +2536,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         icon: <OpenInNewTabIcon />,
         shortcut: "T",
         onSelect: () => openProjectInNewTab(project),
+      },
+      {
+        // Out of the tree without a file touched; the sessions come back the
+        // moment the project does (picking it, one of its sessions, a link).
+        // Refused while one of them runs or waits for input: it would show
+        // again at once, and a waiting dialog must not go hidden.
+        type: "item",
+        id: "close-project",
+        label: t("sidebar.closeProject"),
+        icon: <CloseIcon />,
+        disabled: closeBlock.blocked,
+        disabledReason: closeBlock.blocked
+          ? t(closeBlock.reason === "awaiting" ? "sidebar.closeProjectBlockedAwaiting" : "sidebar.closeProjectBlockedRunning")
+          : undefined,
+        onSelect: () => { void closeProject(project); },
       },
       { type: "separator", id: "separator-layout" },
       {
@@ -3080,7 +3269,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <ProjectWorktreePicker
               handleRef={filesPickerRef}
               layout={stacked ? "row" : "stacked"}
-              context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
+              context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList, closedProjectKeys: [...closedProjectKeys] }}
               mobile={isMobile}
               label={t("sidebar.projectAndWorktree")}
               placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
