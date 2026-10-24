@@ -1697,11 +1697,15 @@ function getApplyPatchFiles(block: ToolCallContent, result?: ToolResultMessage):
   return null;
 }
 
-/** Header label listing the files targeted by an apply_patch call. */
+/**
+ * Header label listing the files targeted by an apply_patch call.
+ * Left whole on purpose; the header's span truncates at the row's width (see
+ * getToolPreview).
+ */
 function summarizeApplyPatchInput(block: ToolCallContent): string | null {
   const paths = extractApplyPatchPaths(getApplyPatchInputText(block.input, block.rawInput));
   if (paths.length === 0) return null;
-  return paths.join(", ").slice(0, 120);
+  return paths.join(", ");
 }
 
 function getResultDiff(result: ToolResultMessage): ResultDiff | null {
@@ -2202,6 +2206,14 @@ function formatCustomType(type: string): string {
 }
 
 
+/**
+ * A tool call's input, as the one-line preview in the collapsed card header.
+ *
+ * No character cap here: the header's span is `nowrap` + `text-overflow: ellipsis`,
+ * so the line fills whatever width the row has and ends with "…" exactly at that
+ * edge. A `slice(0, 120)` would instead cut mid-token with no ellipsis — hiding text
+ * on a wide window that the row could show, and looking like a broken truncation.
+ */
 function getToolPreview(block: ToolCallContent): string {
   const input = block.input;
   if (!input || typeof input !== "object") return "";
@@ -2209,14 +2221,13 @@ function getToolPreview(block: ToolCallContent): string {
   if (keys.length === 0) return "";
 
   // Common tool input patterns
-  if ("command" in input) return String(input.command).slice(0, 120);
-  if ("path" in input) return String(input.path).slice(0, 120);
-  if ("file_path" in input) return String(input.file_path).slice(0, 120);
-  if ("pattern" in input) return String(input.pattern).slice(0, 120);
-  if ("query" in input) return String(input.query).slice(0, 120);
+  if ("command" in input) return String(input.command);
+  if ("path" in input) return String(input.path);
+  if ("file_path" in input) return String(input.file_path);
+  if ("pattern" in input) return String(input.pattern);
+  if ("query" in input) return String(input.query);
 
-  const first = input[keys[0]];
-  return String(first).slice(0, 120);
+  return String(input[keys[0]]);
 }
 
 function formatUsage(usage: {

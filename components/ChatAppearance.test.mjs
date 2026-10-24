@@ -10,7 +10,8 @@ test("chat width validation preserves the default and supported range", () => {
   assert.equal(clampChatContentWidth("invalid"), 820);
   assert.equal(clampChatContentWidth(700), 820);
   assert.equal(clampChatContentWidth(1104), 1104);
-  assert.equal(clampChatContentWidth(2400), 2000);
+  assert.equal(clampChatContentWidth(2400), 2400);
+  assert.equal(clampChatContentWidth(4000), 3200);
 });
 
 test("chat font size preserves the default and bounds stored or supplied values", () => {
