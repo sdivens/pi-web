@@ -314,6 +314,23 @@ test("a long or multi-line value stays inside the card", (t) => {
   assert.ok(textOf(html).includes("line 39"));
 });
 
+test("a long command reaches the header whole, for the row's width to truncate", () => {
+  const command = "git log --oneline --decorate --graph --all --simplify-by-decoration --date=iso-strict --abbrev-commit --show-signature master";
+  const html = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [{ type: "toolCall", toolCallId: "call-bash-long", toolName: "bash", input: { command } }],
+  });
+
+  assert.ok(command.length > 120);
+  // The whole command, not a `slice(0, 120)` prefix: the header's span truncates by
+  // width, so a wide row shows all of it and a narrow one ends with "…" at its edge.
+  assert.ok(html.includes(command));
+  assert.match(html, /text-overflow:ellipsis/);
+  assert.match(html, /white-space:nowrap/);
+});
+
 test("renders subagents as standard tool calls with only an extra side-panel button", () => {
   const block = {
     type: "toolCall",
