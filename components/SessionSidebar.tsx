@@ -644,7 +644,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // that asked was in the sessions tab, which hides with its focus, or the
   // files section was folded. A request also counts when the files already
   // show (below the sessions), hence the counter.
-  const filesFocusRef = useRef<"project-button" | "project-list" | "file-search" | null>(null);
+  const filesFocusRef = useRef<"project-button" | "file-search" | null>(null);
   const [filesFocusRequest, setFilesFocusRequest] = useState(0);
   const contextMenuFocusRef = useRef<HTMLElement | null>(null);
   // The composer's "Open another project…": where the validated folder goes,
@@ -2369,7 +2369,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Everything that goes to the files goes through here: the files tab, or
   // the files section below the sessions, opened (and saved so) if folded.
   // The focus follows once they show.
-  const revealFiles = useCallback((focusTarget: "project-button" | "project-list" | "file-search") => {
+  const revealFiles = useCallback((focusTarget: "project-button" | "file-search") => {
     filesFocusRef.current = focusTarget;
     setFilesFocusRequest((count) => count + 1);
     if (stacked) setFilesSectionCollapsed(false);
@@ -2389,22 +2389,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     window.open(newSessionDeepLink(cwd), "_blank", "noopener,noreferrer");
   };
 
+  // The sessions' footer asks for a folder, not the files' project menu: the
+  // same DirectoryPicker the files' "Open another project…" opens.
   const handleOpenOtherProject = () => {
-    revealFiles("project-list");
+    handleCustomPathClick();
   };
-  // Once the files show, the project button takes the focus, or its menu
-  // opens below it (the menu takes the focus: its filter or first project),
-  // or the file search field does. Below the sessions they may show already:
-  // the request counter runs it all the same. An unfolding section is not
-  // shown yet: its button is still below the sidebar's edge, where the
-  // project menu would be placed.
+  // Once the files show, the project button takes the focus, or the file
+  // search field does. Below the sessions they may show already: the request
+  // counter runs it all the same. An unfolding section is not shown yet: its
+  // button is still below the sidebar's edge.
   const filesShown = stacked ? filesFold.open : sidebarTab === "files";
   useEffect(() => {
     const target = filesFocusRef.current;
     if (!target || !filesShown) return;
     filesFocusRef.current = null;
-    if (target === "project-list") filesPickerRef.current?.openMenu("project");
-    else if (target === "file-search") document.getElementById("file-search-input")?.focus({ preventScroll: true });
+    if (target === "file-search") document.getElementById("file-search-input")?.focus({ preventScroll: true });
     else filesPickerRef.current?.button("project")?.focus({ preventScroll: true });
   }, [filesShown, filesFocusRequest]);
 
