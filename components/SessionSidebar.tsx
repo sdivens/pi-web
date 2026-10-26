@@ -5,6 +5,8 @@ import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies, type SessionFamily } from "@/lib/session-family";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { newSessionDeepLink, sessionDeepLink } from "@/lib/session-links";
+import { copyText } from "@/lib/clipboard";
+import { copyablePath } from "@/lib/copy-path";
 import { getProjectActivity, getRecentProjects } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import {
@@ -99,6 +101,7 @@ import {
   CheckIcon,
   ChevronIcon,
   CloseIcon,
+  CopyIcon,
   DotIcon,
   DotOutlineIcon,
   EyeIcon,
@@ -2474,6 +2477,18 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [moveCwdOutOfProject, sendProjectClosed, showToast, t]);
 
+  /**
+   * A group menu's "Copy project path": the project's folder, quoted when it
+   * holds a space (lib/copy-path.ts), so it pastes into a shell as one word.
+   * A failure is toasted, never silent: on a LAN address there is no secure
+   * context, and the textarea fallback can still be refused.
+   */
+  const copyProjectPath = useCallback((project: SidebarProject) => {
+    void copyText(copyablePath(project.root))
+      .then(() => showToast(t("sidebar.copiedProjectPath")))
+      .catch((error: unknown) => showToast(t("sidebar.copyProjectPathFailed", { error: error instanceof Error ? error.message : String(error) })));
+  }, [showToast, t]);
+
   const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status).map((entry, index) => {
     if (entry.kind === "separator") return { type: "separator", id: `separator-${index}` };
     const label = t(SESSION_ACTION_LABEL_KEYS[entry.id]);
@@ -2550,6 +2565,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           ? t(closeBlock.reason === "awaiting" ? "sidebar.closeProjectBlockedAwaiting" : "sidebar.closeProjectBlockedRunning")
           : undefined,
         onSelect: () => { void closeProject(project); },
+      },
+      {
+        // The project's own folder on the clipboard, quoted when it holds a
+        // space so it pastes into a shell as one word. Nothing moves: no cwd
+        // change, no session, nothing written.
+        type: "item",
+        id: "copy-project-path",
+        label: t("sidebar.copyProjectPath"),
+        icon: <CopyIcon />,
+        title: project.root,
+        onSelect: () => { void copyProjectPath(project); },
       },
       { type: "separator", id: "separator-layout" },
       {

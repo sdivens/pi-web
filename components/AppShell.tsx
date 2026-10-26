@@ -27,6 +27,7 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
+import { copyablePath } from "@/lib/copy-path";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
@@ -77,6 +78,13 @@ import { getAgentsBadge, getSessionFamily } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
+/**
+ * The copied fields that are paths: the clipboard gets them through
+ * `copyablePath()` (quoted when they hold a space), while the panel keeps
+ * showing the bare path. An id or a branch has no space to quote.
+ */
+const PATH_COPY_FIELDS: ReadonlySet<SessionCopyField> = new Set(["file", "projectDir", "gitWorktree"]);
+
 type AutoNameStatus =
   | { kind: "idle" }
   | { kind: "naming" }
@@ -2448,7 +2456,7 @@ export function AppShell() {
                         <button
                           type="button"
                           title={copied ? translate("session.copied") : translate(copyTitleKey[field])}
-                          onClick={() => handleCopySessionField(field, value)}
+                          onClick={() => handleCopySessionField(field, PATH_COPY_FIELDS.has(field) ? copyablePath(value) : value)}
                           style={{
                             alignSelf: "start",
                             display: "inline-flex",
