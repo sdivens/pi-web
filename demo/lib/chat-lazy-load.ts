@@ -59,16 +59,3 @@ export function shouldShowScrollToLatest(
   if (scrollHeight <= clientHeight) return false;
   return !isScrollAtTail(scrollTop, clientHeight, scrollHeight, tolerance);
 }
-
-export function getPromptAnchorSpacerHeight(
-  targetTop: number,
-  contentEnd: number,
-  clientHeight: number,
-): number {
-  const clampedTargetTop = Math.max(0, targetTop);
-  if (clampedTargetTop === 0) return 0;
-
-  return Math.max(0, Math.ceil(
-    clampedTargetTop + clientHeight - Math.max(0, contentEnd),
-  ));
-}
