@@ -201,7 +201,7 @@ components/
   MessageView.tsx          one message (user/assistant/toolCall/toolResult)
   CodemodeToolView.tsx     codemode card: the tool calls its script made
   BranchNavigator.tsx      in-session branch switcher
-  ChatMinimap.tsx          scroll minimap beside the message list
+  ChatMinimap.tsx          the user-message rail beside the message list
   MarkdownBody.tsx         markdown renderer
   ModelsConfig.tsx         Settings › Models: models.json editor
   EnabledModelsSection.tsx model switches inside ModelsConfig (enabledModels)
