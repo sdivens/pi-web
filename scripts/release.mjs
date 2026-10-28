@@ -332,7 +332,9 @@ function build() {
   // behind, which the build keeps and the package would ship.
   rmSync(join(repoRoot, ".next"), { recursive: true, force: true });
   run("构建", NPM, ["run", "build"]);
-  for (const stale of ["dev", "cache", "server/route-cache"]) {
+  // `.next/cache` is part of a build and `files` excludes it; these two are not:
+  // `dev` means a dev server wrote here, `route-cache` means `next start` did.
+  for (const stale of ["dev", "server/route-cache"]) {
     if (existsSync(join(repoRoot, ".next", stale))) {
       throw new ReleaseError(`构建产物里出现了 .next/${stale}，它不该进包`, [
         `rm -rf .next/${stale} 后重跑，或检查是哪个服务写了它`,
@@ -342,7 +344,7 @@ function build() {
   if (!existsSync(join(repoRoot, ".next", "BUILD_ID"))) {
     throw new ReleaseError("构建没有产出 .next/BUILD_ID", ["检查 npm run build 的输出"]);
   }
-  ok("构建完成，产物里没有 dev/cache/route-cache");
+  ok("构建完成，产物里没有 dev 与 route-cache");
 }
 
 function checkTarball(pkg) {
