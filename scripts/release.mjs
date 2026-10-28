@@ -105,10 +105,24 @@ function git(...gitArgs) {
   return result.stdout;
 }
 
+/**
+ * The environment a child gets. A shell started inside a `next dev` session
+ * carries TURBOPACK=1 and __NEXT_* markers, and `next build --webpack` then
+ * refuses to pick a bundler: the build gets them stripped.
+ */
+function childEnv() {
+  const env = { ...process.env };
+  delete env.TURBOPACK;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("__NEXT")) delete env[key];
+  }
+  return env;
+}
+
 /** Runs a command with its output on screen; a non-zero status becomes a failure. */
 function run(title, command, commandArgs) {
   console.log(`\n$ ${command} ${commandArgs.join(" ")}`);
-  const result = spawnSync(command, commandArgs, { stdio: "inherit", cwd: repoRoot });
+  const result = spawnSync(command, commandArgs, { stdio: "inherit", cwd: repoRoot, env: childEnv() });
   if (result.error) throw new ReleaseError(`${title}：无法执行 ${command}（${result.error.message}）`);
   if (result.status !== 0) throw new ReleaseError(`${title}失败（退出码 ${result.status}）`);
 }
