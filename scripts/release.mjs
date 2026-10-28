@@ -292,7 +292,7 @@ function preflightVersion(pkg) {
     : bumpFromCommits();
   state.version = nextVersion(pkg.version, bump);
   state.tag = `v${state.version}`;
-  note(`${pkg.version} → ${state.version}（${bump}，${commits === null ? "手动指定" : `${commits} 个提交，自 ${since}`}）`);
+  note(`${pkg.version} → ${state.version}（${bump}，${commits === null ? "手动指定" : `${commits} 个提交，自 ${since || "仓库开始"}`}）`);
 
   const published = capture(NPM, ["view", `${pkg.name}@${state.version}`, "version", "--registry", REGISTRY]);
   if (published.status === 0) {

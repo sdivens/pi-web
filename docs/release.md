@@ -46,7 +46,7 @@ npm run release -- --minor   # force the bump: --patch / --minor / --major
 
 `scripts/release.mjs` runs the whole checklist and stops at the first problem with the reason and the fix, **before it writes anything**:
 
-1. **preflight** — repo root, branch (`main` unless `--any-branch`), clean tree, no dev server serving this checkout (a stale `.next/dev/lock` whose holder is gone is ignored), registry is npmjs, `npm whoami`, `private` is not set, `files` ships `.next`, the next version is free on npm, and the tag is free locally and on `origin`.
+1. **preflight** — repo root, branch (`main` unless `--any-branch`), clean tree, no dev server serving this checkout (a stale `.next/dev/lock` whose holder is gone is ignored), `node_modules` matching `package-lock.json` (a tree that lags it builds and tests against other packages than the release claims), registry is npmjs, `npm whoami`, `private` is not set, `files` ships `.next`, the next version is free on npm, and the tag is free locally and on `origin`.
 2. **checks** — `npm run lint`, `npx tsc --noEmit`, `npm test`. `--skip-checks` skips all three, `--skip-tests` only the tests, `--e2e` adds the e2e suite.
 3. **release** — bump `package.json` + `package-lock.json`, commit `Release v<version>`, annotated tag `v<version>`.
 4. **build** — wipes `.next` first (a `next start`/e2e run leaves `.next/server/route-cache` behind, the build keeps it and the package would ship it), then `npm run build`, then refuses `.next/dev` or `.next/server/route-cache`.
