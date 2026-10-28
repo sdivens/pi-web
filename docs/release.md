@@ -27,8 +27,8 @@ Expected:
 - `main` and `origin/main` are aligned (`0	0`).
 - GitHub is authenticated as an account that can push and create releases.
 - npm is authenticated as an account that can publish `@stephenzhou01/pi-web`.
-- No dev server is listening on 30141: the production build rewrites `.next/` and breaks a running `npm run dev`. Stop it first.
-- `.next/server/route-cache/` does not exist. An e2e run in `start` mode writes it (`next start` does, the build does not), and it would be published. Delete it if present.
+- No dev server is serving **this checkout**: the production build wipes `.next/`, which breaks a running `npm run dev`. A globally installed `pi-web` in another directory is fine and keeps running.
+- `.next/server/route-cache/` does not exist. An e2e run in `start` mode writes it (`next start` does, the build does not), and it would be published. `npm run release` wipes `.next` before building, so the script takes care of it.
 
 Before bumping, confirm the next version is free (replace `<version>`):
 
@@ -37,70 +37,59 @@ npm view @stephenzhou01/pi-web@<version> version --registry https://registry.npm
 git ls-remote --tags origin v<version>                                            # expect empty
 ```
 
-## 2. Publish to npm
-
-Patch release:
+## 2. Publish with one command
 
 ```bash
-npm run release
+npm run release              # bump decided from the commits since the last tag
+npm run release -- --minor   # force the bump: --patch / --minor / --major
 ```
 
-The release script runs:
+`scripts/release.mjs` runs the whole checklist and stops at the first problem with the reason and the fix, **before it writes anything**:
+
+1. **preflight** — repo root, branch (`main` unless `--any-branch`), clean tree, no dev server serving this checkout (a stale `.next/dev/lock` whose holder is gone is ignored), registry is npmjs, `npm whoami`, `private` is not set, `files` ships `.next`, the next version is free on npm, and the tag is free locally and on `origin`.
+2. **checks** — `npm run lint`, `npx tsc --noEmit`, `npm test`. `--skip-checks` skips all three, `--skip-tests` only the tests, `--e2e` adds the e2e suite.
+3. **release** — bump `package.json` + `package-lock.json`, commit `Release v<version>`, annotated tag `v<version>`.
+4. **build** — wipes `.next` first (a `next start`/e2e run leaves `.next/server/route-cache` behind, the build keeps it and the package would ship it), then `npm run build`, then refuses `.next/dev` or `.next/server/route-cache`.
+5. **tarball** — `npm pack --dry-run` must hold `package.json`, `bin/pi-web.js`, `.next/BUILD_ID`, and nothing from `.next/dev`, `.next/cache`, `.next/server/route-cache`, no source maps, no env files, no `demo/`, `e2e/` or `docs/`.
+6. **publish** — `npm publish --access public`. With 2FA the terminal asks for the one-time code; answer it there.
+7. **verify** — poll the registry until the version returns 200, require `dist-tags.latest` to point at it, then install the published tarball into a temporary prefix and run `pi-web version`.
+
+Two rehearsals: `--dry-run` prints the version it would release and touches nothing; `--no-publish` does everything up to the tarball check and stops.
+
+A failure after step 3 leaves the release commit and tag in place. The script prints what undoes them (`git reset --hard <previous head>`, `git tag -d v<version>`) and never rolls back on its own. Nothing reaches npm unless step 6 succeeds, so undoing never needs `npm unpublish`.
+
+Known blocker: `npm test` is red on `main` for `lib/enabled-models-runtime.test.mjs` ("a bare id shared by two providers matches both"), so a release stops there. Fix that test, or release with `--skip-tests`.
+
+The commands the script runs (useful when debugging it, not a second way to release):
 
 ```bash
-npm version patch --no-git-tag-version && npm run build && npm publish --access public
-```
-
-`npm run release` only bumps the patch number. For a minor (or major) release, set the version yourself and run the other two steps separately:
-
-```bash
-npm version <x.y.0> --no-git-tag-version
+npm version <version> --no-git-tag-version
+git add package.json package-lock.json && git commit -m "Release v<version>"
+git tag -a v<version> -m "v<version>"
 npm run build
 npm publish --access public
 ```
 
-Choosing the bump: look at `git log --oneline v<previous>..HEAD`. A batch of `feat:` commits (new UI, new commands, new settings) is a minor; only fixes and small adjustments is a patch. Decide before running the script, since a published version cannot be reused.
+Choosing the bump: a batch of `feat:` commits (new UI, new commands, new settings) is a minor, only fixes and small adjustments a patch, a `!:`/`BREAKING CHANGE:` commit a major. The script reads this from `git log --oneline v<previous>..HEAD`; pass the flag to override. A published version cannot be reused.
 
 Notes:
 
 - This bumps `package.json` and `package-lock.json`.
 - The first publish of a brand-new package name goes to npm's review instead of straight to the registry: `npm publish` prints `+ <name>@<version>`, the package page shows a `0.0.0-stage` "Temporary Holding Version", and `npm view <name>@<version>` keeps returning E404 until the review clears (minutes to a few hours). `npm stage list <name>` is empty in that case, because the hold is npm's, not a staged publish of yours. Do not publish the same version again; poll the registry. Later versions of an approved package publish immediately.
 - It intentionally runs a production build. Do not run `next build` during normal development; release work is the exception.
-- A newly published version may take a few minutes to show up. `npm view @stephenzhou01/pi-web@<version> version` can return E404 and `npm view @stephenzhou01/pi-web version` can show the previous version even though the publish printed `+ @stephenzhou01/pi-web@<version>`. This is registry propagation, not a failed publish: do not publish again. Poll the registry until the version appears:
+- A newly published version may take a few minutes to show up. The script waits up to five minutes, then tells you to look again rather than publishing twice.
+
+## 3. Push the commit and tag
+
+The script commits the bump and creates the tag; it never pushes.
 
 ```bash
-curl -s https://registry.npmjs.org/@stephenzhou01%2Fpi-web/<version> | head -c 80   # JSON once it exists, "version not found" before
-npm view @stephenzhou01/pi-web dist-tags --registry https://registry.npmjs.org/
-npm view @stephenzhou01/pi-web versions --json --registry https://registry.npmjs.org/
-```
-
-## 3. Commit the Version Bump
-
-Replace `<version>` with the new package version, for example `0.7.5`.
-
-```bash
-git diff -- package.json package-lock.json
-git add package.json package-lock.json
-git commit -m "Release v<version>"
-```
-
-## 4. Tag and Push
-
-```bash
-git tag -a v<version> -m "v<version>"
 git push origin main v<version>
 ```
 
 Push the release tag by name. Do not use `git push --tags`: the local checkout holds tags fetched from contributor forks that are not on origin, and `--tags` publishes them (it leaked a stray `v0.10.5`, on a commit that is on no branch, during the v0.11.0 release). If you ever need `--tags`, compare `git tag` with `git ls-remote --tags origin` first.
 
-Confirm the tag does not already exist before creating it when unsure:
-
-```bash
-git ls-remote --tags origin v<version>
-gh release view v<version> --repo sdivens/pi-web
-```
-
-## 5. Generate Release Notes from Commits
+## 4. Generate Release Notes from Commits
 
 Use the previous release tag as the base.
 
@@ -161,7 +150,7 @@ Prepared from commits in `v<previous>..v<version>`.
 - Published npm package `@stephenzhou01/pi-web@<version>`.
 ```
 
-## 6. Create or Update the GitHub Release
+## 5. Create or Update the GitHub Release
 
 Create a new release:
 
@@ -195,7 +184,7 @@ gh release edit v<version> --repo sdivens/pi-web --notes-file - <<'EOF'
 EOF
 ```
 
-## 7. Final Verification
+## 6. Final Verification
 
 ```bash
 gh release view v<version> --repo sdivens/pi-web
