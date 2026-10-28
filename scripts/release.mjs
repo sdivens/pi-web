@@ -175,6 +175,42 @@ function preflightDevServer() {
   ok("没有 dev server 占用 .next");
 }
 
+/**
+ * An installed tree that lags the lockfile builds and tests against different
+ * packages than the release claims: a stale `node_modules` is what turned a red
+ * unit test into a mystery here (installed pi 1.2 while package.json said 1.4).
+ */
+function preflightDependencies() {
+  step("node_modules 与 lockfile 一致");
+  const readJson = (path) => JSON.parse(readFileSync(join(repoRoot, path), "utf8"));
+  const pkg = readJson("package.json");
+  const lock = readJson("package-lock.json");
+  const optional = new Set(Object.keys(pkg.optionalDependencies ?? {}));
+  const stale = [];
+  for (const name of Object.keys(pkg.dependencies ?? {})) {
+    const locked = lock.packages?.[`node_modules/${name}`]?.version;
+    if (!locked) continue;
+    let installed;
+    try {
+      installed = readJson(join("node_modules", name, "package.json")).version;
+    } catch {
+      installed = optional.has(name) ? locked : undefined;
+    }
+    if (installed === undefined) {
+      stale.push(`${name} 未安装（package-lock.json 要 ${locked}）`);
+    } else if (installed !== locked) {
+      stale.push(`${name} ${installed} ≠ ${locked}`);
+    }
+  }
+  if (stale.length > 0) {
+    throw new ReleaseError("node_modules 与 package-lock.json 不一致，测试跑的不是要发布的依赖", [
+      "npm install   # 按 lockfile 补齐依赖，然后重跑",
+      "dev server 从这个目录跑的话，装完要重启它",
+    ], stale.slice(0, 6));
+  }
+  ok("依赖与 lockfile 一致");
+}
+
 function preflightRegistry() {
   step("npm 配置");
   const registry = capture(NPM, ["config", "get", "registry"]).stdout;
@@ -459,6 +495,7 @@ async function main() {
   console.log(`Pi Web release · ${repoRoot}`);
   preflightRepository();
   preflightDevServer();
+  preflightDependencies();
   preflightRegistry();
   const pkg = packageField();
   preflightLogin();
