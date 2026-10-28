@@ -658,7 +658,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.dropFoldersUnsupported": "不支援拖入資料夾，請拖入其中的檔案：{names}",
     "chat.dropFailed": "上傳失敗：{message}",
     "chat.tokensSaved": "已節省 {saved}",
-    "chatMinimap.earlierTurns": "更早的 {count} 輪尚未載入，點擊載入",
+    "chatMinimap.earlierTurns": "更早的訊息還沒載入，點擊載入",
     "chatMinimap.lockPreview": "鎖定：懸停時不展開預覽",
     "chatMinimap.unlockPreview": "解鎖懸停預覽",
     "i18n.close": "關閉",

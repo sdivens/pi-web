@@ -292,7 +292,7 @@ try {
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-first-page.png"), {
         text: text(4998),
-        earlier: "Earlier turns not loaded: 2475. Click to load",
+        earlier: "Earlier messages are not loaded yet. Click to load",
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,
@@ -336,7 +336,7 @@ try {
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-paged.png"), {
         text: text(4998),
-        earlier: `Earlier turns not loaded: ${oldest / 2}. Click to load`,
+        earlier: "Earlier messages are not loaded yet. Click to load",
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,

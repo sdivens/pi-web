@@ -529,7 +529,7 @@ export const ChatMinimap = memo(function ChatMinimap({
               // The chat's top sentinel pages the older history in.
               onClick={() => scrollContainer.current?.scrollTo({ top: 0, behavior: "smooth" })}
             >
-              {t("chatMinimap.earlierTurns", { count: turnsBefore })}
+              {t("chatMinimap.earlierTurns")}
             </button>
           )}
           {allNodes.map((node) => {
