@@ -266,8 +266,8 @@ try {
     const sentinel = page.getByText("Scroll up to load earlier messages", { exact: true });
     await sentinel.waitFor({ state: "attached" });
     assert.equal(await page.getByText(text(4949), { exact: true }).count(), 0);
-    // The minimap numbers turns from the session's first, not the loaded page's (#791):
-    // e0..e4949 hold 2475 user messages, so the turn asking text(4998) is 2500.
+    // The minimap lists the user's own messages only: no turn numbers, and the
+    // assistant replies of a turn are not rows of their own.
     const readMinimapTurn = async (screenshot) => {
       const node = page.locator("[data-minimap-node-index='0']");
       await node.waitFor();
@@ -277,8 +277,12 @@ try {
       const preview = page.locator("[data-minimap-preview-box]");
       const turn = preview.locator("[data-minimap-preview-index]").filter({ hasText: text(4998) });
       const result = {
-        number: await turn.locator("span[aria-hidden='true']").first().textContent(),
+        text: (await turn.textContent())?.trim(),
         earlier: await preview.locator("[data-minimap-preview-earlier]").textContent(),
+        // text(4997) is an assistant reply of the same loaded page.
+        assistantRows: await preview.locator("[data-minimap-preview-index]").filter({ hasText: text(4997) }).count(),
+        assistantJumps: await preview.locator("[data-minimap-preview-assistant]").count(),
+        numbers: await preview.locator("span[aria-hidden='true']").count(),
       };
       await page.screenshot({ path: join(artifacts, screenshot) });
       await page.mouse.move(0, 0);
@@ -286,7 +290,13 @@ try {
       return result;
     };
     if (viewport.width > 600) {
-      assert.deepEqual(await readMinimapTurn("minimap-turns-first-page.png"), { number: "2500", earlier: "Earlier turns not loaded: 2475. Click to load" });
+      assert.deepEqual(await readMinimapTurn("minimap-turns-first-page.png"), {
+        text: text(4998),
+        earlier: "Earlier turns not loaded: 2475. Click to load",
+        assistantRows: 0,
+        assistantJumps: 0,
+        numbers: 0,
+      });
     }
 
     // Exercise the real IntersectionObserver and prepend path, twice.
@@ -325,9 +335,12 @@ try {
       Array.from({ length: 5000 - oldest }, (_, i) => text(oldest + i)), "Missing, reordered, or duplicate chat messages");
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-paged.png"), {
-        number: "2500",
+        text: text(4998),
         earlier: `Earlier turns not loaded: ${oldest / 2}. Click to load`,
-      }, "Loading older pages must not renumber minimap turns");
+        assistantRows: 0,
+        assistantJumps: 0,
+        numbers: 0,
+      }, "Loading older pages must keep every node on its own message");
     }
     await page.screenshot({ path: join(artifacts, `history-${viewport.width}.png`) });
 
@@ -396,20 +409,19 @@ try {
     const heading = page.getByRole("heading", { name: "E2E compacted heading", exact: true });
     await heading.waitFor({ state: "attached" });
     if (viewport.width > 600) {
-      const node = page.locator("[data-minimap-node-index='0']");
-      await node.waitFor();
-      const rect = await node.boundingBox();
+      // This page holds the compaction divider and the 49 replies after it; its
+      // one user message sits above the page, outside the first 50. The rail
+      // lists the user's own messages, so it shows the unloaded stub and no node
+      // at all (and therefore opens no preview).
+      const lock = page.locator("[data-minimap-lock]");
+      await lock.waitFor();
+      assert.equal(await page.locator("[data-minimap-node-index]").count(), 0, "A page without a user message has no node");
+      await page.locator("[data-minimap-earlier]").waitFor();
+      const rect = await lock.boundingBox();
       assert.ok(rect);
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
-      const preview = page.locator("[data-minimap-preview-box]");
-      await preview.getByRole("button", { name: "E2E compaction anchor", exact: true }).waitFor();
-      await preview.getByRole("button", { name: "E2E compacted heading", exact: true }).click();
-      await page.waitForFunction(() => {
-        const heading = document.querySelector("[data-entry-id='answer'] h2");
-        const scroll = heading?.closest(".overflow-y-auto");
-        return heading && scroll && Math.abs(heading.getBoundingClientRect().top
-          - scroll.getBoundingClientRect().top - scroll.clientHeight * 0.3) < 5;
-      });
+      assert.equal(await page.locator("[data-minimap-preview-box]").count(), 0, "No node, no preview");
+      await page.mouse.move(0, 0);
       await page.screenshot({ path: join(artifacts, "compaction-minimap.png") });
 
       // A session row of the sidebar's sessions, found by its visible title
