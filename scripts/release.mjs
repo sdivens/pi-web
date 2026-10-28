@@ -145,12 +145,18 @@ function preflightRepository() {
 
 function preflightDevServer() {
   step("没有正在使用本仓库 .next 的开发服务");
-  if (existsSync(join(repoRoot, ".next", "dev", "lock"))) {
-    throw new ReleaseError("本仓库的 dev server 正在运行（.next/dev/lock 存在）", [
-      "停掉它（lsof -nP -iTCP:30141 -sTCP:LISTEN 找到进程），然后重跑",
-      "若它是崩溃后留下的锁：rm -rf .next",
-      "另一个目录里 npm 全局安装的 pi-web 不占用这里，可以继续运行",
-    ]);
+  const lock = join(repoRoot, ".next", "dev", "lock");
+  if (existsSync(lock)) {
+    // A lock nobody holds is a crashed dev server's leftover, and the build
+    // wipes .next anyway; a held one means a dev server is serving from here.
+    const holders = capture("lsof", ["-nP", lock]);
+    if (holders.status === 0 && holders.stdout.split("\n").length > 1) {
+      throw new ReleaseError("本仓库的 dev server 正在运行（.next/dev/lock 被占用）", [
+        "停掉它（lsof -nP -iTCP:30141 -sTCP:LISTEN 找到进程），然后重跑",
+        "另一个目录里 npm 全局安装的 pi-web 不占用这里，可以继续运行",
+      ], holders.stdout.split("\n").slice(1, 3));
+    }
+    warn("发现残留的 .next/dev/lock（没有进程占用），构建前会被清掉");
   }
   ok("没有 dev server 占用 .next");
 }
