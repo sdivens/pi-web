@@ -213,7 +213,35 @@ export type ExtensionUiRequest =
       method: "custom";
       lines: string[];
       closed?: boolean;
+      /**
+       * pi-web's own reading of the TUI component the extension returned, when it is
+       * a pi-tui `SelectList` (`lib/extension-custom-list.ts`). Never set by an
+       * extension: it is derived from the component the extension already handed to
+       * `ctx.ui.custom()`, and is only how this client draws that component as a
+       * native list. Absent for every other custom UI, which keeps the text panel.
+       */
+      list?: ExtensionCustomList;
     };
+
+/** One entry of a custom panel's `SelectList`, as the browser draws it. */
+export interface ExtensionCustomListItem {
+  label: string;
+  description?: string;
+}
+
+/**
+ * A custom panel's `SelectList`, described for native rendering.
+ *
+ * `items` are the entries the extension's own filter currently matches, in the
+ * order the component shows them, so `selectedIndex` indexes into this array.
+ * `total` is the unfiltered count, for a "3/120" line beside the box.
+ */
+export interface ExtensionCustomList {
+  items: ExtensionCustomListItem[];
+  /** -1 when the filter matches nothing. */
+  selectedIndex: number;
+  total: number;
+}
 
 export type BlockingExtensionUiRequest = Extract<
   ExtensionUiRequest,

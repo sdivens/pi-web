@@ -10,6 +10,7 @@ import { invalidateModelsCache } from "./models-cache";
 import { invalidateModelRuntimeWithExtensions } from "./model-runtime";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { findDeferredModel, findDeferredStartupModel, rememberProviderModels } from "./deferred-provider-models";
+import { describeCustomUiList, findCustomUiList } from "./extension-custom-list";
 import { isBlockingExtensionUiRequest } from "./extension-ui-queue";
 import {
   createProjectCommandBashExtension,
@@ -1337,6 +1338,11 @@ export class AgentSessionWrapper {
         return null;
       }
 
+      case "extension_ui_list_select": {
+        this.handleExtensionUiListSelect(command.id as string, command.index);
+        return null;
+      }
+
       case "set_auto_retry": {
         this.inner.setAutoRetryEnabled(command.enabled as boolean);
         return null;
@@ -1738,14 +1744,47 @@ export class AgentSessionWrapper {
     } catch (error) {
       lines = [`Extension custom UI render failed: ${error instanceof Error ? error.message : String(error)}`];
     }
+    // A component that is (or wraps) a pi-tui SelectList also travels as data, so the
+    // browser can draw a native list with mouse support. Anything else stays text.
+    const list = describeCustomUiList(custom.component);
     const event = {
       type: "extension_ui_request",
       id,
       method: "custom",
       lines,
+      ...(list ? { list } : {}),
     } as ExtensionUiRequest as AgentEvent;
     this.pendingUiRequests.set(id, event);
     this.emit(event);
+  }
+
+  /**
+   * A click in the native list: move the extension's own selection, then confirm it.
+   *
+   * Both steps are what the terminal does with a mouse click (`SelectList.handleMouse`
+   * selects on press and calls `onSelect` on click), and `handleInput("\r")` is the
+   * same path the keyboard takes — so the extension's `SelectList` decides, not us.
+   */
+  private handleExtensionUiListSelect(id: string, index: unknown): void {
+    const custom = this.activeCustomUis.get(id);
+    if (!custom) return;
+    const list = findCustomUiList(custom.component);
+    if (!list) return;
+    const count = list.filteredItems.length;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= count) return;
+    try {
+      (list.setSelectedIndex as (value: number) => void).call(list, index);
+      (list.handleInput as (data: string) => void).call(list, "\r");
+      if (this.activeCustomUis.has(id)) this.emitCustomUiRender(id, custom);
+    } catch (error) {
+      this.closeCustomUi(id, undefined);
+      this.emit({
+        type: "extension_error",
+        extensionPath: `custom-ui:${id}`,
+        event: "custom_ui_list_select",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private closeCustomUi(id: string, value: unknown): void {
