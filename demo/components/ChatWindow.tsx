@@ -1813,8 +1813,30 @@ function ExtensionCustomPanel({
     if (!collapsed) inputRef.current?.focus();
   }, [collapsed]);
 
+  /**
+   * Esc belongs to an open panel, wherever the last click left the focus (see the
+   * real client's `ExtensionCustomPanel`: without this, Esc reaches the global
+   * shortcut and stops the run instead of cancelling the extension).
+   */
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (panelRef.current?.contains(target)) return;
+      const tag = target?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onInput(request, "\x1b");
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [request, onInput]);
+
   return (
     <div
+      ref={panelRef}
       style={{
         position: "absolute",
         inset: 0,

@@ -5,6 +5,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
+import { applyListQuery } from "@/lib/extension-custom-list";
 import { splitNoticeText } from "@/lib/notice-text";
 import { EXTENSION_DIALOG_BASE_WIDTH, fitExtensionDialogWidth } from "@/lib/extension-dialog-fit";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -19,6 +20,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { ExtensionCustomListPanel } from "./ExtensionCustomListPanel";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
@@ -281,7 +283,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, addNotice,
+    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, selectExtensionUiListItem, setNoticePaused, addNotice,
     isAutoModelSelection,
     isAutoThinkingSelection,
     defaultModel,
@@ -978,7 +980,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
         )}
         {extensionCustomUi && (
-          <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />
+          <ExtensionCustomPanel
+            key={extensionCustomUi.id}
+            request={extensionCustomUi}
+            waitingCount={waitingExtensionCustomUiCount}
+            onInput={sendExtensionCustomInput}
+            onSelectItem={selectExtensionUiListItem}
+          />
         )}
         {!isEmptyNew && <>
         <div
@@ -1965,11 +1973,14 @@ function ExtensionCustomPanel({
   request,
   waitingCount,
   onInput,
+  onSelectItem,
 }: {
   request: ExtensionCustomRequest;
   /** Further custom panels queued behind this one; each opens after this one closes. */
   waitingCount: number;
   onInput: (request: ExtensionCustomRequest, data: string) => void;
+  /** A click in the native list; the server moves the extension's own selection. */
+  onSelectItem: (request: ExtensionCustomRequest, index: number) => void;
 }) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1977,13 +1988,54 @@ function ExtensionCustomPanel({
   const [collapsed, setCollapsed] = useState(false);
   const displayLines = normalizeCustomPanelLines(request.lines);
   const summary = displayLines.find((line) => line.trim())?.trim();
+  // Echo of what the user typed into the hidden textarea, for the native list's
+  // filter line. Cleared when the panel goes away or a new one takes over.
+  const [query, setQuery] = useState("");
+  const list = request.list;
 
   useEffect(() => {
     if (!collapsed) inputRef.current?.focus();
   }, [collapsed]);
 
+  /** Every key and pasted text keeps its existing path to the extension. */
+  const forwardInput = (data: string) => {
+    setQuery((previous) => applyListQuery(previous, data));
+    onInput(request, data);
+  };
+
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Esc belongs to an open panel, wherever the last click left the focus.
+   *
+   * The hidden textarea forwards Esc like a terminal does, but only while it has
+   * focus. The overlay lets clicks through (`pointerEvents: none`), so a click on
+   * the chat behind it moves the focus away and Esc then reaches the global
+   * shortcut instead — which stops the run: the panel disappears without the
+   * extension ever being cancelled (pi-tui's `SelectList` never sees its
+   * `onCancel`). Captured on `document` so it runs before that window-level
+   * shortcut, and skipped when the key already belongs to something nearer: the
+   * panel's own field forwards it itself, and the composer keeps its Esc logic.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (panelRef.current?.contains(target)) return;
+      const tag = target?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Esc is not text: the list's filter echo stays as it is.
+      onInput(request, "\x1b");
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [request, onInput]);
+
   return (
     <div
+      ref={panelRef}
       style={{
         position: "absolute",
         inset: 0,
@@ -2071,13 +2123,13 @@ function ExtensionCustomPanel({
             if (!data) return;
             event.preventDefault();
             event.stopPropagation();
-            onInput(request, data);
+            forwardInput(data);
           }}
           onInput={(event) => {
             if (composingRef.current || event.nativeEvent.isComposing) return;
             const text = event.currentTarget.value;
             event.currentTarget.value = "";
-            if (text) onInput(request, text);
+            if (text) forwardInput(text);
           }}
           onCompositionStart={() => {
             composingRef.current = true;
@@ -2088,13 +2140,13 @@ function ExtensionCustomPanel({
             queueMicrotask(() => {
               const text = input.value;
               input.value = "";
-              if (text) onInput(request, text);
+              if (text) forwardInput(text);
             });
           }}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData.getData("text");
-            if (text) onInput(request, asBracketedPaste(text));
+            if (text) forwardInput(asBracketedPaste(text));
           }}
           style={{
             position: "absolute",
@@ -2149,22 +2201,30 @@ function ExtensionCustomPanel({
             </button>
           </div>
         </div>
-        <pre
-          style={{
-            margin: 0,
-            padding: 14,
-            minHeight: 0,
-            overflow: "auto",
-            background: "var(--bg-panel)",
-            color: "var(--text)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 13,
-            lineHeight: 1.45,
-            whiteSpace: "pre",
-          }}
-        >
-          <AnsiText text={displayLines.join("\n")} />
-        </pre>
+        {list ? (
+          <ExtensionCustomListPanel
+            list={list}
+            query={query}
+            onSelect={(index) => onSelectItem(request, index)}
+          />
+        ) : (
+          <pre
+            style={{
+              margin: 0,
+              padding: 14,
+              minHeight: 0,
+              overflow: "auto",
+              background: "var(--bg-panel)",
+              color: "var(--text)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 13,
+              lineHeight: 1.45,
+              whiteSpace: "pre",
+            }}
+          >
+            <AnsiText text={displayLines.join("\n")} />
+          </pre>
+        )}
       </div>
       )}
     </div>
