@@ -2003,8 +2003,39 @@ function ExtensionCustomPanel({
     onInput(request, data);
   };
 
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Esc belongs to an open panel, wherever the last click left the focus.
+   *
+   * The hidden textarea forwards Esc like a terminal does, but only while it has
+   * focus. The overlay lets clicks through (`pointerEvents: none`), so a click on
+   * the chat behind it moves the focus away and Esc then reaches the global
+   * shortcut instead — which stops the run: the panel disappears without the
+   * extension ever being cancelled (pi-tui's `SelectList` never sees its
+   * `onCancel`). Captured on `document` so it runs before that window-level
+   * shortcut, and skipped when the key already belongs to something nearer: the
+   * panel's own field forwards it itself, and the composer keeps its Esc logic.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (panelRef.current?.contains(target)) return;
+      const tag = target?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Esc is not text: the list's filter echo stays as it is.
+      onInput(request, "\x1b");
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [request, onInput]);
+
   return (
     <div
+      ref={panelRef}
       style={{
         position: "absolute",
         inset: 0,
