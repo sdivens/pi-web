@@ -544,6 +544,7 @@ export const enLocale: LocalePlugin = {
     "chat.extensionListEmpty": "Nothing matches.",
     "chat.extensionListCount": "{shown} of {total}",
     "chat.extensionListFilter": "Filter: {query}",
+    "chat.extensionListHint": "↑↓ move · type to filter · Enter confirm · Esc cancel",
     "chat.extensionWidgets": "Extension widgets",
     "chat.extensionWidgetAbove": "Above editor widget",
     "chat.extensionWidgetBelow": "Below editor widget",

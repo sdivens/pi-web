@@ -544,6 +544,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.extensionListEmpty": "没有匹配的条目。",
     "chat.extensionListCount": "{shown} / {total} 条",
     "chat.extensionListFilter": "筛选：{query}",
+    "chat.extensionListHint": "↑↓ 移动 · 输入筛选 · Enter 确认 · Esc 取消",
     "chat.extensionWidgets": "扩展组件",
     "chat.extensionWidgetAbove": "输入框上方组件",
     "chat.extensionWidgetBelow": "输入框下方组件",

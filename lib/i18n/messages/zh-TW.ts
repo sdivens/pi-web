@@ -544,6 +544,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.extensionListEmpty": "沒有符合的項目。",
     "chat.extensionListCount": "{shown} / {total} 項",
     "chat.extensionListFilter": "篩選：{query}",
+    "chat.extensionListHint": "↑↓ 移動 · 輸入篩選 · Enter 確認 · Esc 取消",
     "chat.extensionWidgets": "擴充功能小工具",
     "chat.extensionWidgetAbove": "編輯器上方小工具",
     "chat.extensionWidgetBelow": "編輯器下方小工具",

@@ -72,9 +72,11 @@ export function ExtensionCustomListPanel({
             color: trimmedQuery ? "var(--text-muted)" : "var(--text-dim)",
           }}
         >
+          {/* The extension's own hint line is part of the terminal frame we do not
+              draw, so the native panel carries its own (true of every SelectList). */}
           {trimmedQuery
             ? t("chat.extensionListFilter", { query: trimmedQuery })
-            : t("chat.extensionListFilter", { query: "" })}
+            : t("chat.extensionListHint")}
         </span>
         <span style={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
           {t("chat.extensionListCount", { shown: list.items.length, total: list.total })}

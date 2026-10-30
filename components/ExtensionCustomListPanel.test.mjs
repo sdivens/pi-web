@@ -60,8 +60,9 @@ test("shows the echoed filter and an empty state", () => {
   assert.match(html, /Filter: 不存在/);
 });
 
-test("without a query the filter line still renders, empty", () => {
+test("without a query the header row carries the key hints instead", () => {
   const html = render({ list, query: "", onSelect: () => {} });
-  assert.match(html, /Filter: <\/span>/);
+  assert.match(html, /Enter confirm/);
+  assert.doesNotMatch(html, /Filter:/);
   assert.doesNotMatch(html, /undefined/);
 });
