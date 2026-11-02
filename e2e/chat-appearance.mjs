@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { checkFontPreferences } from "./font-preferences.mjs";
 
+// `End` on the width slider takes it to `CHAT_CONTENT_WIDTH_MAX` (hooks/useChatAppearance.ts):
+// this fork raised it from 2000 to 3200, and these assertions read the slider after `End`.
+const MAX_CONTENT_WIDTH = 3200;
+
 export async function checkChatAppearanceReset(page) {
   const width = page.getByRole("slider", { name: "Chat content width", exact: true });
   const fontSize = page.getByRole("slider", { name: "Chat & terminal font size", exact: true });
@@ -14,7 +18,7 @@ export async function checkChatAppearanceReset(page) {
   await width.press("End");
   await resetFontSize.click();
   assert.equal(await fontSize.inputValue(), "14");
-  assert.equal(await width.inputValue(), "2000", "Resetting font size must preserve width");
+  assert.equal(await width.inputValue(), String(MAX_CONTENT_WIDTH), "Resetting font size must preserve width");
   await resetWidth.click();
   assert.deepEqual(await page.evaluate(() => ({
     width: localStorage.getItem("pi-chat-content-width"),
@@ -80,7 +84,7 @@ export async function checkChatAppearance(page) {
   assert.equal(await font(page.locator(".markdown-code-block pre")), "16.5px");
 
   await openSettings();
-  assert.equal(await width.inputValue(), "2000");
+  assert.equal(await width.inputValue(), String(MAX_CONTENT_WIDTH));
   assert.equal(await fontSize.inputValue(), "18");
   await checkChatAppearanceReset(page);
   await checkFontPreferences(page);
