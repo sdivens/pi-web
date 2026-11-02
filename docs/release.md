@@ -1,3 +1,9 @@
+> **This fork releases differently from upstream.** Upstream (`agegr/pi-web`)
+> publishes `@agegr/pi-web` from GitHub Actions on a `v*` tag
+> (`.github/workflows/publish.yml`, Trusted Publishing). This fork keeps its own
+> name `@stephenzhou01/pi-web`, its own tags and a local one-command script
+> (`npm run release`); the workflow file is not kept here.
+
 # Release Checklist
 
 This repo publishes two artifacts for each release:

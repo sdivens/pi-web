@@ -16,7 +16,8 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
-import { SubagentViewer } from "./SubagentViewer";
+import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
+import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
@@ -28,7 +29,6 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { copyablePath } from "@/lib/copy-path";
-import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
@@ -37,10 +37,12 @@ import {
   showBrowserNotification,
 } from "@/lib/browser-notifications";
 import { setupPushSubscription } from "@/lib/push-client";
+import { startPageVisibilityTracking } from "@/lib/page-debug";
+import type { DebugClientSession } from "@/lib/debug-types";
 import { getInitialNavigation, linkedSessionId, withTabOpen } from "@/lib/initial-navigation";
 import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
 import { mergeCatalogRow } from "./session-catalog-helpers";
-import { getDraft, rekeyDraft } from "@/lib/draft-store";
+import { getDraft, parkedNewSessionDraftKey, rekeyDraft } from "@/lib/draft-store";
 import {
   contextForCwd,
   type NewSessionContext,
@@ -74,8 +76,10 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import { formatActiveDuration, formatCompactCount, formatCostShort } from "@/lib/session-stats-format";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
-import { getAgentsBadge, getSessionFamily } from "@/lib/session-family";
+import { createSideChat } from "@/lib/side-chat-client";
+import { getAgentsBadge, getFoldedMoreAgentsBadge, getSessionFamily, isHiddenRelation, sideChatNameFrom, sideChatTitle } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
+import { focusIfLost } from "@/lib/stacked-dialog";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 /**
@@ -96,10 +100,6 @@ const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
 const TOOL_END_REFRESH_MS = 1000;
-
-function parkedNewSessionDraftKey(cwd: string): string {
-  return `parked-new:${cwd}`;
-}
 
 /** Panel tab id of the last sub-agent tab, or null when there is none. */
 function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
@@ -149,6 +149,11 @@ export function AppShell() {
     }
   }, []);
   const notifiedAttentionRequestIdsRef = useRef(new Set<string>());
+  // Sessions that finished while the tab was out of sight (#1484): the browser
+  // Notification fires for the selected session, which the sidebar's unread
+  // markers exclude ("already looking" — false while hidden). The favicon keeps
+  // their badge until the tab is opened again; never persisted, never dotted.
+  const [hiddenFinishedSessionIds, setHiddenFinishedSessionIds] = useState<Set<string>>(new Set());
   const handleBackgroundTaskDone = useCallback(() => {
     if (soundEnabledRef.current) playDoneSound();
   }, [playDoneSound, soundEnabledRef]);
@@ -180,7 +185,6 @@ export function AppShell() {
     () => getSessionFamily(sessionsWithSelection, selectedSession?.id),
     [selectedSession?.id, sessionsWithSelection],
   );
-  const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
     setRunningSessionIds((previous) => {
@@ -247,6 +251,13 @@ export function AppShell() {
     if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
   }, [rightPanelOpen, isMobile]);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
+  // A narrow phone folds the Agents button into More: the folded button says that subagents run.
+  const foldedMoreAgentsBadge = isNarrowMobile ? getFoldedMoreAgentsBadge(agentsBadge, mobileToolbarMoreOpen) : null;
+  const moreControlsLabel = mobileToolbarMoreOpen
+    ? translate("chat.close")
+    : foldedMoreAgentsBadge
+      ? translate("chat.moreControlsAgentsRunning", { count: foldedMoreAgentsBadge.count })
+      : translate("chat.moreControls");
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
   const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
@@ -316,7 +327,8 @@ export function AppShell() {
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
-  const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
+  // `/side <prompt>`: the text that seeds the side chat's composer, until its panel consumes it.
+  const [sideChatPrompts, setSideChatPrompts] = useState<Record<string, string>>({});
   const topBarRef = useRef<HTMLDivElement>(null);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
@@ -359,6 +371,17 @@ export function AppShell() {
     setSystemInfoLoading(false);
   }, []);
 
+  // The debug panel's reader of the chat's own state: kept in a ref, so registering renders
+  // nothing, and read only by the open panel (DebugPanel), never on AppShell's renders.
+  const debugSnapshotReaderRef = useRef<(() => DebugClientSession) | null>(null);
+  const handleDebugSnapshotReaderChange = useCallback((reader: (() => DebugClientSession) | null) => {
+    debugSnapshotReaderRef.current = reader;
+  }, []);
+  // The panel reports the page's visibility history from the first mount on, opened or not.
+  useEffect(() => {
+    startPageVisibilityTracking();
+  }, []);
+
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
@@ -392,7 +415,7 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -402,23 +425,34 @@ export function AppShell() {
   }, [sessionHasBranches]);
 
   useEffect(() => {
-    if (!hasSubagentSessions) {
+    if (!activeSessionFamily) {
       setActiveTopPanel((panel) => panel === "agents" ? null : panel);
     }
-  }, [hasSubagentSessions]);
+  }, [activeSessionFamily]);
 
   useEffect(() => {
     if (rightPanelFullWidth) setActiveTopPanel(null);
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session",
+    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
     if (isMobile && isNarrowMobile && keepMobileToolbarOpen) setMobileToolbarMoreOpen(true);
   }, [isMobile, isNarrowMobile]);
+
+  // The Debug button on screen (one of its three places at a time); Escape gives focus back to it.
+  const debugButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Escape inside the debug panel; it never closes another panel that took its place. With focus
+  // in the panel, that focus leaves the page with it: once the panel is gone (the next frame), the
+  // Debug button gets it back, unless the user moved it meanwhile (focusIfLost).
+  const closeDebugPanel = useCallback((restoreFocus: boolean) => {
+    setActiveTopPanel((panel) => panel === "debug" ? null : panel);
+    if (restoreFocus) requestAnimationFrame(() => focusIfLost(document, debugButtonRef.current));
+  }, []);
 
   const handleSystemInfoToggle = useCallback((
     panel: "system" | "tools",
@@ -544,7 +578,7 @@ export function AppShell() {
   const [terminalsRestored, setTerminalsRestored] = useState(false);
   // Subagent work tabs are session-scoped and transient: no persistence, and
   // they are dropped when the project changes (they belong to its sessions).
-  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string }[]>([]);
+  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string; side?: boolean }[]>([]);
   const panelTabs: Tab[] = [
     ...fileTabs,
     ...terminalTabs.map((tab) => ({
@@ -554,12 +588,16 @@ export function AppShell() {
       kind: "terminal" as const,
       closing: Boolean(tab.closing),
     })),
-    ...agentTabs.map((tab) => ({
-      id: `agent:${tab.sessionId}`,
-      label: tab.label,
-      filePath: tab.label,
-      kind: "agent" as const,
-    })),
+    ...agentTabs.map((tab) => {
+      const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
+      const label = session ? sideChatTitle(session, tab.label) : tab.label;
+      return {
+        id: `agent:${tab.sessionId}`,
+        label,
+        filePath: label,
+        kind: (tab.side ? "side" : "agent") as "agent" | "side",
+      };
+    }),
   ];
 
   useEffect(() => {
@@ -838,7 +876,8 @@ export function AppShell() {
     setSystemPrompt(null);
     setSystemTools(null);
     setSystemInfoLoading(false);
-    setActiveTopPanel(null);
+    // The debug panel stays open across the switch: it follows whichever session is shown.
+    setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     if (currentProject !== newProject) {
       // Keep #281's project isolation, but park each workspace's file tabs
       // instead of discarding them so they return when the user switches back.
@@ -863,7 +902,7 @@ export function AppShell() {
     const projectKey = workspaceKeyOf(session);
     if (activeProjectKeyRef.current !== projectKey) {
       changeFileWorkspace(activeProjectKeyRef.current, projectKey);
-      setActiveTopPanel(null);
+      setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     }
     activeProjectKeyRef.current = projectKey;
     // Re-clicking the already-open session must not remount the chat and
@@ -945,7 +984,7 @@ export function AppShell() {
     setSystemPrompt(null);
     setSystemTools(null);
     setSystemInfoLoading(false);
-    setActiveTopPanel(null);
+    setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     if (isMobile) setSidebarOpen(false);
     router.replace(`?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
     // The fresh composer takes the caret once it renders (#1313), unless the
@@ -1043,9 +1082,17 @@ export function AppShell() {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
 
-    if (end.aborted || selectedSession?.relation?.kind === "subagent") return;
+    if (end.aborted || end.subagentsActive || isHiddenRelation(selectedSession?.relation)) return;
     if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
+    if (targetSession) {
+      setHiddenFinishedSessionIds((prev) => {
+        if (prev.has(targetSession.id)) return prev;
+        const next = new Set(prev);
+        next.add(targetSession.id);
+        return next;
+      });
+    }
     deliverSessionNotification({
       targetSession,
       title: targetSession?.name ?? translate("i18n.sessionComplete"),
@@ -1054,8 +1101,23 @@ export function AppShell() {
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 
+  // The badge is for an unseen tab: opening it puts the finished chat on screen.
+  useEffect(() => {
+    const clearIfSeen = () => {
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+      setHiddenFinishedSessionIds((prev) => (prev.size === 0 ? prev : new Set()));
+    };
+    clearIfSeen();
+    document.addEventListener("visibilitychange", clearIfSeen);
+    window.addEventListener("focus", clearIfSeen);
+    return () => {
+      document.removeEventListener("visibilitychange", clearIfSeen);
+      window.removeEventListener("focus", clearIfSeen);
+    };
+  }, []);
+
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
-    if (selectedSession?.relation?.kind === "subagent") return;
+    if (isHiddenRelation(selectedSession?.relation)) return;
     if (!shouldShowBrowserNotification()) return;
     if (!claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
 
@@ -1138,20 +1200,6 @@ export function AppShell() {
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
-  const handleAskInNewChat = useCallback(async (
-    prompt: string,
-    sourceSessionId: string,
-    sourceEntryId: string,
-  ) => {
-    const result = await sendAgentCommand<{ newSessionId?: string }>(sourceSessionId, {
-      type: "fork_branch",
-      entryId: sourceEntryId,
-    });
-    if (!result?.newSessionId) throw new Error(translate("chat.quoteForkFailed"));
-    setPendingQuotePrompt({ sessionId: result.newSessionId, text: prompt });
-    handleSessionForked(result.newSessionId);
-  }, [handleSessionForked, translate]);
-
   // The sidebar calls this when the initial session is not in its list.
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
@@ -1183,7 +1231,7 @@ export function AppShell() {
       setSystemPrompt(null);
       setSystemTools(null);
       setSystemInfoLoading(false);
-      setActiveTopPanel(null);
+      setActiveTopPanel((panel) => panel === "debug" ? panel : null);
       router.replace(cwd ? `?cwd=${encodeURIComponent(cwd)}` : (typeof window !== "undefined" ? window.location.pathname : "/"), { scroll: false });
     }
   }, [invalidateWorkspaceRestore, router]);
@@ -1225,8 +1273,15 @@ export function AppShell() {
   }, [terminalTabs, isMobile]);
 
   // Subagent work opens in a right-panel tab instead of hijacking the main chat.
-  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
-    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId) ? prev : [...prev, { sessionId, label }]);
+  const handleOpenSubagentTab = useCallback((sessionId: string, label: string, side?: boolean) => {
+    setAgentTabs((prev) => {
+      if (prev.some((tab) => tab.sessionId === sessionId)) return prev;
+      // Every side chat has the same name, and `/side` can be used again and
+      // again: the lowest number no open tab shows tells them apart.
+      let numbered = label;
+      for (let number = 2; side && prev.some((tab) => tab.label === numbered); number += 1) numbered = `${label} ${number}`;
+      return [...prev, { sessionId, label: numbered, ...(side ? { side: true } : {}) }];
+    });
     setActiveFileTabId(`agent:${sessionId}`);
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
@@ -1240,14 +1295,38 @@ export function AppShell() {
     () => new Set(rightPanelOpen ? agentTabs.map((tab) => tab.sessionId) : []),
     [agentTabs, rightPanelOpen],
   );
-  const handleToggleSubagentTab = (sessionId: string, label: string) => {
+  const handleToggleSubagentTab = (sessionId: string, label: string, side?: boolean) => {
     if (openSubagentTabIds.has(sessionId)) {
       handleCloseFileTab(`agent:${sessionId}`);
       return;
     }
     if (isMobile) setActiveTopPanel(null);
-    handleOpenSubagentTab(sessionId, label);
+    handleOpenSubagentTab(sessionId, label, side);
   };
+
+  // `/side` landed (hooks/useAgentSession): open the forked chat's tab, seed
+  // its composer when the command carried a prompt, and refresh the list so
+  // the family's badge folds the new member in.
+  const handleSideSession = useCallback((session: SessionInfo, prompt: string | null) => {
+    if (prompt) setSideChatPrompts((prev) => ({ ...prev, [session.id]: prompt }));
+    handleOpenSubagentTab(session.id, sideChatTitle(session, (prompt && sideChatNameFrom(prompt)) || translate("sideChat.title")), true);
+    setRefreshKey((key) => key + 1);
+  }, [handleOpenSubagentTab, translate]);
+
+  // The switcher's New side chat, on the main agent's row, whichever family member the main chat shows.
+  const handleNewSideChat = useCallback(async (rootSessionId: string) => {
+    const result = await createSideChat(rootSessionId, translate);
+    if ("error" in result) return result.error;
+    if (isMobile) setActiveTopPanel(null);
+    handleSideSession(result.session, null);
+    return null;
+  }, [handleSideSession, isMobile, translate]);
+
+  // A side chat's first prompt names it: read the name when a run in an open tab starts or ends.
+  const runningSideTabs = agentTabs.filter((tab) => tab.side && runningSessionIds.has(tab.sessionId)).map((tab) => tab.sessionId).join();
+  useEffect(() => {
+    if (runningSideTabs) setRefreshKey((key) => key + 1);
+  }, [runningSideTabs]);
 
   const handleTerminalClosed = (tab: TerminalTab) => {
     const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
@@ -1283,6 +1362,12 @@ export function AppShell() {
       return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs);
     });
   }, [fileTabs, terminalTabs, agentTabs]);
+
+  // One session, one chat: opening a subagent or side chat in the main chat closes its tab.
+  const selectedSessionId = selectedSession?.id;
+  useEffect(() => {
+    if (agentTabs.some((tab) => tab.sessionId === selectedSessionId)) handleCloseFileTab(`agent:${selectedSessionId}`);
+  }, [agentTabs, handleCloseFileTab, selectedSessionId]);
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -1354,6 +1439,11 @@ export function AppShell() {
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
+
+  // The Debug button shows with a chat only: without one, its panel would have nothing to close it.
+  useEffect(() => {
+    if (!showChat) setActiveTopPanel((panel) => panel === "debug" ? null : panel);
+  }, [showChat]);
 
   useEffect(() => {
     setProjectTrust(null);
@@ -1459,6 +1549,7 @@ export function AppShell() {
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
         onBackgroundTaskDone={handleBackgroundTaskDone}
+        hiddenFinishedSessionIds={hiddenFinishedSessionIds}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
       />
@@ -1562,6 +1653,35 @@ export function AppShell() {
       </button>
     );
   };
+
+  // While subagents run: their count, ringed by a spinner; otherwise all of them.
+  const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: boolean) => (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "relative",
+        minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
+        borderRadius: 7,
+        background: badge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
+        color: "var(--accent)",
+        fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
+        fontWeight: badge.running ? 600 : undefined,
+        ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
+      }}
+    >
+      {badge.running && (
+        <svg
+          className="animate-spin motion-reduce:animate-none"
+          viewBox="0 0 24 24" fill="none" aria-hidden="true"
+          style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
+        >
+          <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+          <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
+      {badge.count}
+    </span>
+  );
 
   const renderChatToolbarActions = (mobile: boolean) => {
     if (!mobile && !showChat) return null;
@@ -1706,60 +1826,35 @@ export function AppShell() {
             </button>
           );
         })()}
-        {hasSubagentSessions && agentsBadge && (
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("agents", mobile)}
-            title={agentsButtonLabel}
-            aria-label={agentsButtonLabel}
-            aria-pressed={activeTopPanel === "agents"}
-            style={{
-              position: "relative",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-              height: "100%", padding: mobile ? 0 : "0 12px",
-              background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderRight: "1px solid var(--border)",
-              color: activeTopPanel === "agents" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-              transition: "color 0.1s, background 0.1s",
-            }}
-            data-mobile-toolbar-action={mobile ? "agents" : undefined}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
-            </svg>
-            {!mobile && <span>{translate("agentSwitcher.title")}</span>}
-            {/* While subagents run: their count, ringed by a spinner; otherwise all of them. */}
-            <span
-              aria-hidden="true"
-              style={{
-                position: "relative",
-                minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
-                borderRadius: 7,
-                background: agentsBadge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
-                color: "var(--accent)",
-                fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
-                fontWeight: agentsBadge.running ? 600 : undefined,
-                ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
-              }}
-            >
-              {agentsBadge.running && (
-                <svg
-                  className="animate-spin motion-reduce:animate-none"
-                  viewBox="0 0 24 24" fill="none" aria-hidden="true"
-                  style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
-                >
-                  <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
-                  <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              )}
-              {agentsBadge.count}
-            </span>
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => toggleTopPanel("agents", mobile)}
+          disabled={!activeSessionFamily}
+          title={agentsButtonLabel}
+          aria-label={agentsButtonLabel}
+          aria-pressed={activeTopPanel === "agents"}
+          style={{
+            position: "relative",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+            height: "100%", padding: mobile ? 0 : "0 12px",
+            background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
+            border: "none",
+            borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            color: activeTopPanel === "agents" ? "var(--text)" : activeSessionFamily ? "var(--text-muted)" : "var(--text-dim)",
+            cursor: activeSessionFamily ? "pointer" : "not-allowed", opacity: activeSessionFamily ? 1 : 0.45,
+            flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s",
+          }}
+          data-mobile-toolbar-action={mobile ? "agents" : undefined}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+          </svg>
+          {!mobile && <span>{translate("agentSwitcher.title")}</span>}
+          {agentsBadge && agentsBadge.count > 0 && renderAgentsBadge(agentsBadge, mobile)}
+        </button>
         {sessionHasBranches && (mobile ? (
           <button
             type="button"
@@ -1898,15 +1993,15 @@ export function AppShell() {
 
     const tooltipParts: string[] = [];
     if (tokens) {
-      tooltipParts.push(`in: ${tokens.input.toLocaleString(locale)}`);
-      tooltipParts.push(`out: ${tokens.output.toLocaleString(locale)}`);
-      tooltipParts.push(`cache read: ${tokens.cacheRead.toLocaleString(locale)}`);
-      tooltipParts.push(`cache write: ${tokens.cacheWrite.toLocaleString(locale)}`);
-      if (cost > 0) tooltipParts.push(`cost: $${cost.toFixed(4)}`);
+      tooltipParts.push(`${translate("session.input")}: ${tokens.input.toLocaleString(locale)}`);
+      tooltipParts.push(`${translate("session.output")}: ${tokens.output.toLocaleString(locale)}`);
+      tooltipParts.push(`${translate("session.cacheRead")}: ${tokens.cacheRead.toLocaleString(locale)}`);
+      tooltipParts.push(`${translate("session.cacheWrite")}: ${tokens.cacheWrite.toLocaleString(locale)}`);
+      if (cost > 0) tooltipParts.push(`${translate("session.cost")}: $${cost.toFixed(4)}`);
     }
     if (contextUsage?.contextWindow) {
       const percent = contextUsage.percent;
-      tooltipParts.push(`context: ${percent !== null ? percent.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+      tooltipParts.push(`${translate("session.context")}: ${percent !== null ? `${percent.toFixed(1)}%` : "?"} / ${contextUsage.contextWindow.toLocaleString(locale)}`);
     }
     const tooltip = tooltipParts.join("  |  ");
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
@@ -1929,7 +2024,8 @@ export function AppShell() {
         className={mobile ? "mobile-session-stats" : undefined}
         data-mobile-toolbar-stats={mobile ? "true" : undefined}
         style={{
-          marginLeft: mobile ? 0 : "auto",
+          // The Debug button before it takes the free space (renderDebugButton).
+          marginLeft: 0,
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           flex: mobile ? 1 : undefined,
           minWidth: 0,
@@ -2034,6 +2130,47 @@ export function AppShell() {
     );
   };
 
+  // Icon only, right of the chat's actions; on a desktop it takes the bar's free space, so it
+  // sits left of the session stats. It only opens or closes its panel: nothing is loaded here.
+  const renderDebugButton = (mobile: boolean) => {
+    if (!showChat) return null;
+    const open = activeTopPanel === "debug";
+    return (
+      <button
+        ref={debugButtonRef}
+        type="button"
+        onClick={() => toggleTopPanel("debug", mobile)}
+        title={translate("debug.title")}
+        aria-label={translate("debug.title")}
+        aria-pressed={open}
+        style={{
+          marginLeft: mobile ? 0 : "auto",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+          background: open ? "var(--bg-selected)" : "none",
+          border: "none",
+          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
+          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
+          color: open ? "var(--text)" : "var(--text-muted)",
+          cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
+        }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)";
+        }}
+        data-mobile-toolbar-action={mobile ? "debug" : undefined}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+          <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
+          <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
+          <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+        </svg>
+      </button>
+    );
+  };
+
   const renderMainFileToggle = (mobile: boolean) => {
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
     return (
@@ -2049,7 +2186,8 @@ export function AppShell() {
         aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         data-mobile-toolbar-file={mobile ? "true" : undefined}
         style={{
-          marginLeft: !mobile && !sessionStats && !contextUsage ? "auto" : 0,
+          // With a chat the Debug button is right-aligned instead (renderDebugButton).
+          marginLeft: !mobile && !showChat ? "auto" : 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
           visibility: covered ? "hidden" : "visible",
@@ -2255,8 +2393,8 @@ export function AppShell() {
                 <button
                   type="button"
                   onClick={handleMobileToolbarMoreToggle}
-                  title={mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls")}
-                  aria-label={mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls")}
+                  title={moreControlsLabel}
+                  aria-label={moreControlsLabel}
                   aria-controls="mobile-toolbar-actions"
                   aria-expanded={mobileToolbarMoreOpen}
                   data-mobile-toolbar-more="true"
@@ -2280,9 +2418,11 @@ export function AppShell() {
                       <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
                     </svg>
                   )}
+                  {foldedMoreAgentsBadge && renderAgentsBadge(foldedMoreAgentsBadge, true)}
                 </button>
               )}
               {!isNarrowMobile && renderChatToolbarActions(true)}
+              {!isNarrowMobile && renderDebugButton(true)}
               {renderSessionStatsButton(true)}
               {renderMainFileToggle(true)}
               {isNarrowMobile && mobileToolbarMoreOpen && (
@@ -2300,12 +2440,17 @@ export function AppShell() {
                     zIndex: 20,
                     display: "flex",
                     alignItems: "stretch",
+                    // More buttons than a 320px phone fits (the Debug button made seven): scroll, never clip.
+                    overflowX: "auto",
+                    overflowY: "hidden",
+                    scrollbarWidth: "none",
                     background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
                     boxShadow: "4px 0 18px rgba(0,0,0,0.12)",
                     backdropFilter: "blur(10px)",
                   }}
                 >
                   {renderChatToolbarActions(true)}
+                  {renderDebugButton(true)}
                 </div>
               )}
             </div>
@@ -2314,6 +2459,7 @@ export function AppShell() {
             <>
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
+              {renderDebugButton(false)}
               {renderSessionStatsButton(false)}
             </>
           )}
@@ -2353,6 +2499,7 @@ export function AppShell() {
                   onSelectSession={handleSelectSession}
                   openSubagentTabIds={openSubagentTabIds}
                   onToggleSubagentTab={handleToggleSubagentTab}
+                  onNewSideChat={() => handleNewSideChat(activeSessionFamily.root.id)}
                 />
               )}
               {activeTopPanel === "system" && (
@@ -2564,6 +2711,16 @@ export function AppShell() {
                   )}
                 </div>
               )}
+              {activeTopPanel === "debug" && (
+                <DebugPanelBoundary fallback={translate("debug.failed")}>
+                  <DebugPanel
+                    readerRef={debugSnapshotReaderRef}
+                    selectedSessionId={selectedSession?.id ?? null}
+                    sessions={sessionsWithSelection}
+                    onClose={closeDebugPanel}
+                  />
+                </DebugPanelBoundary>
+              )}
             </div>
           )}
 
@@ -2592,12 +2749,14 @@ export function AppShell() {
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
+              onSideSession={handleSideSession}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
               onSystemPromptChange={handleSystemPromptChange}
               onSystemToolsChange={handleSystemToolsChange}
               onSystemInfoLoaderChange={handleSystemInfoLoaderChange}
+              onDebugSnapshotReaderChange={handleDebugSnapshotReaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onOpenSettings={openSettingsSection}
@@ -2605,10 +2764,7 @@ export function AppShell() {
               onOpenFile={handleOpenLinkedFile}
               onFilesUploaded={handleExplorerRefresh}
               onOpenSubagent={handleOpenSubagentTab}
-              onAskInNewChat={handleAskInNewChat}
               quoteSelectionEnabled={quoteSelectionEnabled}
-              initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
-              onInitialPromptConsumed={() => setPendingQuotePrompt(null)}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
@@ -2787,12 +2943,33 @@ export function AppShell() {
             </div>
           ))}
           {activeAgentTab && (
-            <SubagentViewer
+            <SessionChatPanel
               key={activeAgentTab.sessionId}
               sessionId={activeAgentTab.sessionId}
-              fallbackLabel={activeAgentTab.label}
               running={runningSessionIds.has(activeAgentTab.sessionId)}
+              initialPrompt={sideChatPrompts[activeAgentTab.sessionId]}
+              onInitialPromptConsumed={() => setSideChatPrompts((prev) => {
+                if (!(activeAgentTab.sessionId in prev)) return prev;
+                const next = { ...prev };
+                delete next[activeAgentTab.sessionId];
+                return next;
+              })}
+              modelsRefreshKey={modelsRefreshKey}
+              quoteSelectionEnabled={quoteSelectionEnabled}
               onOpenFile={handleOpenLinkedFile}
+              onOpenSubagent={handleOpenSubagentTab}
+              onSessionForked={(newSessionId) => {
+                if (isMobile) setRightPanelOpen(false);
+                handleSessionForked(newSessionId);
+              }}
+              onOpenSettings={openSettingsSection}
+              onToolEnd={handleToolEnd}
+              onFilesUploaded={handleExplorerRefresh}
+              soundEnabled={soundEnabled}
+              onSoundToggle={onSoundToggle}
+              playDoneSound={playDoneSound}
+              unlockAudio={unlockAudio}
+              holdAudio={holdAudio}
             />
           )}
         </div>

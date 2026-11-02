@@ -7,6 +7,7 @@ import {
 } from "@/lib/rpc-manager";
 import { getSessionUiStateRevision } from "@/lib/session-ui-state";
 import { getClosedProjectKeys, getClosedProjectsRevision } from "@/lib/project-closed";
+import { getSessionIdsWithUnsettledSubagentRuns } from "@/lib/subagent-runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export const dynamic = "force-dynamic";
 // The closed projects ride along (lib/project-closed.ts): closing and reopening
 // needs a sync in every window, and this poll is already the one that carries
 // the running set the closing check reads.
+// subagentsActiveSessionIds: sessions whose subagents can still start a run
+// there, so the sidebar announces their completion only after the last one.
 export async function GET() {
   return NextResponse.json(
     {
@@ -23,6 +26,7 @@ export async function GET() {
       runningSessionIds: getRunningRpcSessionIds(),
       awaitingInputSessionIds: getAwaitingInputRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
+      subagentsActiveSessionIds: getSessionIdsWithUnsettledSubagentRuns(),
       sessionUiStateRevision: getSessionUiStateRevision(),
       closedProjectKeys: getClosedProjectKeys(),
       closedProjectsRevision: getClosedProjectsRevision(),
