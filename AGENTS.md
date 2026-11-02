@@ -24,6 +24,26 @@ pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them 
 
 ---
 
+## Syncing Upstream
+
+The fork's upstream is https://github.com/agegr/pi-web, configured as the
+`upstream` remote with `remote.upstream.tagOpt = --no-tags`, so its tags never
+land here: this fork keeps its own `v*` tags, its own package name
+(`@stephenzhou01/pi-web`) and its own `npm run release` script.
+
+Sync on a branch, never straight on `main`: `git switch -c chore/sync-upstream-<version> main`,
+`git fetch upstream main`, `git merge upstream/main`, resolve, run tsc/lint/test/e2e,
+then fast-forward `main`. Do it in a `git worktree` so a running dev server keeps
+serving the main checkout while conflicts are open (unresolved files break the
+build). Predictable conflicts: `package.json`/lock (identity, version, release
+script — keep ours), `docs/release.md` (ours; upstream publishes from CI),
+`AGENTS.md` and `docs/agents/**` (union), and any file where upstream still has
+code this fork removed (the prompt-anchor spacer, or `slice(0, 120)` in
+`getToolPreview`). Do not take `.github/workflows/publish.yml` or `container.yml`:
+they publish `@agegr/pi-web` and a GHCR image on a `v*` tag.
+
+---
+
 ## Architecture
 
 - **Browsing** (read-only, no AgentSession): `GET /api/sessions` lists `~/.pi/agent/sessions/`; `GET /api/sessions/[id]` reads the `.jsonl` through SDK `SessionManager` helpers and `lib/session-reader.ts`, or an open wrapper's in-memory `SessionManager`. `GET /api/agent/running` snapshots the running ids.
