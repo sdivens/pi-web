@@ -35,6 +35,7 @@ const skipChecks = flag("skip-checks");
 const skipTests = skipChecks || flag("skip-tests");
 const e2e = flag("e2e");
 const anyBranch = flag("any-branch");
+const verifyOnly = flag("verify-only");
 const forcedBump = ["major", "minor", "patch"].find(flag);
 
 if (help) {
@@ -48,6 +49,8 @@ if (help) {
   --e2e                        also run the e2e suite (needs playwright's chromium)
   --dry-run                    checks only: print the version it would release
   --no-publish                 rehearse: stop after the tarball check, publish nothing
+  --verify-only                only re-check that package.json's version is on the
+                               registry (after a publish whose verification hiccuped)
 `);
   process.exit(0);
 }
@@ -433,6 +436,27 @@ async function registryInfo(name, version) {
   return { status: response.status };
 }
 
+/**
+ * The package document, read past every cache.
+ *
+ * `npm install` may serve a packument it cached up to five minutes ago, and the
+ * version a release just pushed is exactly what such a copy lacks: this read
+ * bypasses npm's cache, so "the registry has it" means it.
+ */
+async function packument(name) {
+  const encoded = name.replace("/", "%2F");
+  const response = await fetch(`${REGISTRY}${encoded}`, { headers: { "cache-control": "no-cache" } });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+/** Whether the registry lists this exact version, with a tarball to fetch. */
+async function publishedEntry(name, version) {
+  const doc = await packument(name);
+  const entry = doc?.versions?.[version];
+  return { listed: !!entry, tarball: entry?.dist?.tarball ?? null };
+}
+
 async function distTag(name) {
   const encoded = name.replace("/", "%2F");
   const response = await fetch(`${REGISTRY}-/package/${encoded}/dist-tags`);
@@ -447,7 +471,13 @@ async function verifyPublished(pkg) {
   for (;;) {
     last = await registryInfo(pkg.name, state.version).catch(() => ({ status: 0 }));
     note(`${new Date().toLocaleTimeString()} ${state.version} → ${last.status}`);
-    if (last.status === 200) break;
+    if (last.status === 200) {
+      // The version document answers `npm view <name>@<version>`; `npm install`
+      // resolves from the packument, which can lag it. Wait for both.
+      const { listed } = await publishedEntry(pkg.name, state.version);
+      if (listed) break;
+      last = { status: "200 (packument 尚未收录)" };
+    }
     if (Date.now() > deadline) {
       throw new ReleaseError(`5 分钟内 registry 仍返回 ${last.status}，发布可能还在传播或审核中`, [
         "不要重发同一个版本；过几分钟再看：npm view <name>@<version> version",
@@ -467,17 +497,30 @@ async function verifyPublished(pkg) {
   ok(`latest → ${state.version}`);
 }
 
-function verifyInstall(pkg) {
+async function verifyInstall(pkg) {
   step("装一次真包并启动版本号");
   const prefix = mkdtempSync(join(tmpdir(), "pi-web-release-"));
   try {
     const npmMajor = Number(capture(NPM, ["--version"]).stdout.split(".")[0]);
-    const installArgs = ["install", "--global", "--prefix", prefix];
+    // `--prefer-online`: a packument npm cached before the publish lacks this
+    // version, and npm reports that as `notarget` — a failure of the cache, not
+    // of the release.
+    const installArgs = ["install", "--global", "--prefix", prefix, "--prefer-online"];
     if (npmMajor >= 11) installArgs.push(`--allow-scripts=${INSTALL_SCRIPTS}`);
     installArgs.push(`${pkg.name}@${state.version}`);
     const installed = capture(NPM, installArgs);
     if (installed.status !== 0) {
-      throw new ReleaseError("从 registry 安装这个版本失败", ["确认 tarball 内容完整"], installed.stderr.split("\n").slice(-3));
+      // The registry is the authority: if it lists the version with a tarball,
+      // the publish happened and this install is a local problem.
+      const { listed, tarball } = await publishedEntry(pkg.name, state.version);
+      if (!listed) {
+        throw new ReleaseError("从 registry 安装这个版本失败", ["确认 tarball 内容完整"], installed.stderr.split("\n").slice(-3));
+      }
+      warn(`registry 已有 ${state.version}（${tarball}），但本机 npm 装不上`);
+      warn(installed.stderr.split("\n").find((line) => line.includes("notarget")) ?? installed.stderr.split("\n").slice(-1)[0]);
+      note("本机 npm 的 packument 缓存（约 5 分钟）过期了，不是发布失败：不要回滚提交或 tag");
+      note(`确认：npm install -g --prefer-online ${pkg.name}@${state.version}`);
+      return;
     }
     const bin = join(prefix, "bin", pkg.bin ? Object.keys(pkg.bin)[0] : "pi-web");
     const printed = capture(bin, ["version"]);
@@ -493,6 +536,16 @@ function verifyInstall(pkg) {
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`Pi Web release · ${repoRoot}`);
+  if (verifyOnly) {
+    const pkg = packageField();
+    state.version = pkg.version;
+    state.tag = `v${state.version}`;
+    note(`只验证 registry 上的 ${pkg.name}@${state.version}，不改动仓库、不发布`);
+    await verifyPublished(pkg);
+    await verifyInstall(pkg);
+    step("验证结束");
+    return;
+  }
   preflightRepository();
   preflightDevServer();
   preflightDependencies();
@@ -523,7 +576,7 @@ async function main() {
 
   publish(pkg);
   await verifyPublished(pkg);
-  verifyInstall(pkg);
+  await verifyInstall(pkg);
 
   const branch = git("symbolic-ref", "--short", "HEAD");
   step("完成");

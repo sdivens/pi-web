@@ -85,6 +85,25 @@ Notes:
 - It intentionally runs a production build. Do not run `next build` during normal development; release work is the exception.
 - A newly published version may take a few minutes to show up. The script waits up to five minutes, then tells you to look again rather than publishing twice.
 
+### When the install check fails right after publishing
+
+`npm install -g <name>@<version>` can answer `notarget` seconds after a
+successful publish: npm caches a package's document for about five minutes, and
+the copy it cached before the publish has no such version. The publish itself is
+fine — the registry has the version, `dist-tags.latest` points at it and the
+tarball downloads. Do **not** roll back the commit or the tag; that would leave
+git behind what npm already serves. Confirm with:
+
+```bash
+node scripts/release.mjs --verify-only          # re-checks package.json's version only
+npm install -g --prefer-online <name>@<version>
+```
+
+`--verify-only` runs the registry poll and the install check for the version in
+`package.json`, touching neither the repository nor npm. The script now installs
+with `--prefer-online` and, when the install still fails while the registry lists
+the version, warns instead of telling you to roll back.
+
 ## 3. Push the commit and tag
 
 The script commits the bump and creates the tag; it never pushes.
