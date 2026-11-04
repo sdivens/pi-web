@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import { isMessageGroupAnchor } from "@/lib/message-display";
+import type { UserAnchorEntry } from "@/lib/user-anchors";
 import { loadMinimapPreviewLocked, saveMinimapPreviewLocked } from "@/lib/minimap-preview-lock";
 import type { AgentMessage, TextContent, UserMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
@@ -9,10 +10,20 @@ import styles from "./ChatMinimap.module.css";
 
 interface Props {
   messages: AgentMessage[];
+  /** `entryIds[i]` belongs to `messages[i]`: how a question finds its row. */
+  entryIds?: string[];
   scrollContainer: RefObject<HTMLDivElement | null>;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
+  /**
+   * Every question on the branch (`GET /api/sessions/[id]/user-anchors`), in
+   * context order. Empty or missing → the rail falls back to the messages the
+   * browser has, which is all it can do without the server's list.
+   */
+  anchors?: UserAnchorEntry[];
+  /** Page in and jump to a question that is not loaded yet. */
+  onRevealAnchor?: (entryId: string) => void;
   onRevealHistory: () => void;
-  /** Turns of the branch the server has not sent yet (#791). */
+  /** Turns of the branch the server has not sent yet (#791); fallback only. */
   turnsBefore: number;
 }
 
@@ -65,8 +76,27 @@ function getUserPreview(message: UserMessage): string {
 }
 
 interface TurnInfo {
-  userMessage: UserMessage;
+  /** The question's entry id: what a click pages to and scrolls to. */
+  entryId: string;
+  /** First line, from the server's list (or the loaded message's own text). */
+  text: string;
   scrollTop: number | null;
+}
+
+/**
+ * The rail's nodes: every question the server knows about, each matched to a row
+ * the chat has measured. A question whose page is not loaded yet keeps
+ * `scrollTop: null`, and a click pages that history in instead of scrolling.
+ */
+export function mergeMinimapNodes(
+  anchors: readonly { entryId: string; text: string }[],
+  scrollTopByEntry: ReadonlyMap<string, number>,
+): TurnInfo[] {
+  return anchors.map((anchor) => ({
+    entryId: anchor.entryId,
+    text: anchor.text,
+    scrollTop: scrollTopByEntry.get(anchor.entryId) ?? null,
+  }));
 }
 
 interface NodeInfo {
@@ -116,10 +146,54 @@ function layoutNodes(allNodes: NodeInfo[], minimapHeight: number): NodeLayout {
   };
 }
 
+/**
+ * One question in the preview.
+ *
+ * Memoized on `located` alone: the rail of a long session lists every question,
+ * and a pointer moving along it changed a prop of one row per step — without
+ * this, each move re-rendered the whole list.
+ */
+const PreviewRow = memo(function PreviewRow({
+  node,
+  located,
+  unloadedLabel,
+  registerItem,
+  onSelect,
+}: {
+  node: NodeInfo;
+  located: boolean;
+  unloadedLabel: string;
+  registerItem: (index: number, element: HTMLDivElement | null) => void;
+  onSelect: (node: NodeInfo, behavior: ScrollBehavior) => void;
+}) {
+  const unloaded = node.targetTurn.scrollTop === null;
+  return (
+    <div
+      ref={(element) => registerItem(node.index, element)}
+      className={styles.turn}
+      data-minimap-preview-index={node.index}
+      data-located={located ? "true" : undefined}
+    >
+      <button
+        type="button"
+        className={styles.user}
+        data-unloaded={unloaded ? "true" : undefined}
+        title={unloaded ? unloadedLabel : undefined}
+        onClick={() => onSelect(node, "smooth")}
+      >
+        <span className={styles.userText}>{node.targetTurn.text}</span>
+      </button>
+    </div>
+  );
+});
+
 export const ChatMinimap = memo(function ChatMinimap({
   messages,
+  entryIds,
   scrollContainer,
   messageRefs,
+  anchors,
+  onRevealAnchor,
   onRevealHistory,
   turnsBefore,
 }: Props) {
@@ -144,10 +218,14 @@ export const ChatMinimap = memo(function ChatMinimap({
   const previewHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNodeLockRef = useRef<{ index: number; until: number } | null>(null);
   // A node clicked before its row was mounted (older history still paging in).
-  const pendingNavigationRef = useRef<number | null>(null);
+  const pendingNavigationRef = useRef<string | null>(null);
 
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const entryIdsRef = useRef(entryIds);
+  entryIdsRef.current = entryIds;
+  const anchorsRef = useRef(anchors);
+  anchorsRef.current = anchors;
 
   const nodeLayout = useMemo(
     () => layoutNodes(allNodes, minimapHeight),
@@ -155,6 +233,11 @@ export const ChatMinimap = memo(function ChatMinimap({
   );
   const { nodes: positionedNodes, gap: nodeGap } = nodeLayout;
   nodeLayoutRef.current = nodeLayout;
+
+  const registerPreviewItem = useCallback((index: number, element: HTMLDivElement | null) => {
+    if (element) previewItemRefs.current.set(index, element);
+    else previewItemRefs.current.delete(index);
+  }, []);
 
   const lockActiveNode = useCallback((index: number) => {
     activeNodeLockRef.current = {
@@ -207,25 +290,41 @@ export const ChatMinimap = memo(function ChatMinimap({
 
       const refs = messageRefs.current;
       const containerRect = scrollEl.getBoundingClientRect();
-      const turns: TurnInfo[] = collectMinimapAnchors(messagesRef.current).map((anchor) => {
-        const elementRect = refs?.[anchor.refIndex]?.getBoundingClientRect();
-        return {
-          userMessage: anchor.message,
-          scrollTop: elementRect
-            ? elementRect.top - containerRect.top + scrollEl.scrollTop
-            : null,
-        };
+      // Rows are counted exactly as ChatWindow renders them (anchor messages and
+      // replies, one `messageRefs` slot each), so a loaded question's node lands
+      // on its own row.
+      const scrollTopByEntry = new Map<string, number>();
+      const loadedQuestions: { entryId: string; text: string }[] = [];
+      const rowEntryIds = entryIdsRef.current;
+      let rowIndex = 0;
+      messagesRef.current.forEach((message, messageIndex) => {
+        if (!isMessageGroupAnchor(message) && message.role !== "assistant") return;
+        const refIndex = rowIndex++;
+        if (message.role !== "user") return;
+        const entryId = rowEntryIds?.[messageIndex] ?? `#${messageIndex}`;
+        loadedQuestions.push({ entryId, text: getUserPreview(message as UserMessage) });
+        const elementRect = refs?.[refIndex]?.getBoundingClientRect();
+        if (elementRect) {
+          scrollTopByEntry.set(entryId, elementRect.top - containerRect.top + scrollEl.scrollTop);
+        }
       });
 
-      const nextNodes = createTurnNodes(turns);
+      // The server's list when there is one: it knows the questions this page
+      // does not hold. Without it, the loaded page is the rail.
+      const source = anchorsRef.current && anchorsRef.current.length > 0
+        ? anchorsRef.current
+        : loadedQuestions;
+      const nextNodes = createTurnNodes(mergeMinimapNodes(source, scrollTopByEntry));
       setMinimapHeight(minimapEl.clientHeight);
       allNodesRef.current = nextNodes;
       setAllNodes(nextNodes);
       setVisible(scrollEl.scrollHeight - scrollEl.clientHeight > 20);
       syncActiveNode(scrollEl, nextNodes);
 
-      const pendingIndex = pendingNavigationRef.current;
-      const pendingNode = pendingIndex === null ? null : nextNodes[pendingIndex];
+      const pendingId = pendingNavigationRef.current;
+      const pendingNode = pendingId === null
+        ? null
+        : nextNodes.find((node) => node.targetTurn.entryId === pendingId);
       const pendingTop = pendingNode?.targetTurn.scrollTop;
       if (!pendingNode || pendingTop === null || pendingTop === undefined) return;
       pendingNavigationRef.current = null;
@@ -270,15 +369,18 @@ export const ChatMinimap = memo(function ChatMinimap({
       updateScroll();
     }, 50);
     return () => clearTimeout(timeout);
-  }, [messages.length, measureNodes, updateScroll]);
+  }, [messages.length, anchors, measureNodes, updateScroll]);
 
   const scrollToNode = useCallback((node: NodeInfo, behavior: ScrollBehavior) => {
     const scrollEl = scrollContainer.current;
     if (!scrollEl) return;
     lockActiveNode(node.index);
     if (node.targetTurn.scrollTop === null) {
-      pendingNavigationRef.current = node.index;
-      onRevealHistory();
+      pendingNavigationRef.current = node.targetTurn.entryId;
+      // The server's list knows questions this page left out: page them in and
+      // scroll once the row mounts. Without it, only the window can widen.
+      if (onRevealAnchor) onRevealAnchor(node.targetTurn.entryId);
+      else onRevealHistory();
       return;
     }
     const targetTop = Math.max(
@@ -286,7 +388,7 @@ export const ChatMinimap = memo(function ChatMinimap({
       node.targetTurn.scrollTop - scrollEl.clientHeight * 0.3,
     );
     scrollEl.scrollTo({ top: targetTop, behavior });
-  }, [lockActiveNode, onRevealHistory, scrollContainer]);
+  }, [lockActiveNode, onRevealAnchor, onRevealHistory, scrollContainer]);
 
   const findNearestNode = useCallback((ratio: number): NodeInfo | null => {
     const { nodes, gap, fillsHeight } = nodeLayoutRef.current;
@@ -521,7 +623,7 @@ export const ChatMinimap = memo(function ChatMinimap({
           onMouseDown={(event) => event.stopPropagation()}
           onMouseMove={(event) => event.stopPropagation()}
         >
-          {turnsBefore > 0 && (
+          {turnsBefore > 0 && (anchors?.length ?? 0) === 0 && (
             <button
               type="button"
               className={styles.earlier}
@@ -532,31 +634,16 @@ export const ChatMinimap = memo(function ChatMinimap({
               {t("chatMinimap.earlierTurns")}
             </button>
           )}
-          {allNodes.map((node) => {
-            const isLocated = nearestNodeIndex === node.index;
-            return (
-              <div
-                key={node.index}
-                ref={(element) => {
-                  if (element) previewItemRefs.current.set(node.index, element);
-                  else previewItemRefs.current.delete(node.index);
-                }}
-                className={styles.turn}
-                data-minimap-preview-index={node.index}
-                data-located={isLocated ? "true" : undefined}
-              >
-                <button
-                  type="button"
-                  className={styles.user}
-                  onClick={() => scrollToNode(node, "smooth")}
-                >
-                  <span className={styles.userText}>
-                    {getUserPreview(node.targetTurn.userMessage)}
-                  </span>
-                </button>
-              </div>
-            );
-          })}
+          {allNodes.map((node) => (
+            <PreviewRow
+              key={node.index}
+              node={node}
+              located={nearestNodeIndex === node.index}
+              unloadedLabel={t("chatMinimap.loadAnchor")}
+              registerItem={registerPreviewItem}
+              onSelect={scrollToNode}
+            />
+          ))}
         </div>
       )}
     </div>

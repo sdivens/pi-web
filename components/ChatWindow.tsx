@@ -31,6 +31,7 @@ import type { StreamingStore } from "@/lib/streaming-message";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
+import { useUserAnchors } from "@/hooks/useUserAnchors";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { DebugClientSession } from "@/lib/debug-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
@@ -40,6 +41,8 @@ import { getTranscriptNotices, summarizeCacheMisses, type CacheMissSummary } fro
 import { cacheMissSummaryText, TRANSCRIPT_NOTICE_WARNING_COLOR, TranscriptNoticeLines } from "@/components/TranscriptNotices";
 import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import {
+  ANCHOR_REVEAL_PAGE,
+  ANCHOR_REVEAL_PAGES,
   captureScrollDistance,
   getNextVisibleCount,
   getVisibleRenderWindow,
@@ -835,6 +838,38 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     setVisibleCount((current) => Math.max(current, messages.length * 2));
   }, [messages.length]);
 
+  // The rail lists every question on the branch, not just this page's
+  // (`GET /api/sessions/[id]/user-anchors`).
+  const userAnchors = useUserAnchors(session?.id, messages.length, Boolean(sessionBusy) || isStreaming);
+
+  // Jumping to a question the browser has not paged in yet: read older pages
+  // until its entry is here (the rail's pending id then scrolls to it), with a
+  // bound so a click cannot pull a whole book into the page.
+  const revealingAnchorRef = useRef(false);
+  const revealAnchor = useCallback(async (entryId: string) => {
+    if (revealingAnchorRef.current) return;
+    const sid = session?.id ?? sessionIdRef.current;
+    if (!sid) return;
+    revealingAnchorRef.current = true;
+    try {
+      let { entryIds: loaded, historyCursor: cursor, hasEarlierMessages: hasMore } = searchHistoryRef.current;
+      for (let page = 0; page < ANCHOR_REVEAL_PAGES && !loaded.includes(entryId) && hasMore && cursor; page += 1) {
+        const context = await loadOlderPage(sid, cursor, { tail: ANCHOR_REVEAL_PAGE });
+        if (!context) return;
+        loaded = context.entryIds;
+        cursor = context.oldestEntryId;
+        hasMore = context.hasMore;
+      }
+      if (!loaded.includes(entryId)) {
+        addNotice({ id: `anchor-${entryId}`, message: t("chatMinimap.tooFar"), type: "warning" });
+        return;
+      }
+      setVisibleCount((current) => Math.max(current, loaded.length));
+    } finally {
+      revealingAnchorRef.current = false;
+    }
+  }, [addNotice, loadOlderPage, session?.id, t]);
+
   const isEmptyNew = isNew && messages.length === 0 && !isStreaming && !sessionBusy;
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
@@ -1265,8 +1300,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         {isMobile || pendingScrollRestore ? null : (
           <ChatMinimap
             messages={messages}
+            entryIds={entryIds}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}
+            anchors={userAnchors}
+            onRevealAnchor={revealAnchor}
             onRevealHistory={revealHistoryForMinimap}
             turnsBefore={earlierTurnCount}
           />

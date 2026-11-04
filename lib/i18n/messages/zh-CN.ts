@@ -902,6 +902,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.sendNotReceived": "消息没有送达服务器，原文已放回输入框。",
     "chat.tokensSaved": "节省 {saved}",
     "chatMinimap.earlierTurns": "更早的消息还没加载，点击加载",
+    "chatMinimap.loadAnchor": "还没加载，点击加载并跳转",
+    "chatMinimap.tooFar": "那条消息太远，无法直接跳转；向上滚动加载它",
     "chatMinimap.lockPreview": "锁定：悬停时不展开预览",
     "chatMinimap.unlockPreview": "解锁悬停预览",
     "i18n.close": "关闭",

@@ -902,6 +902,8 @@ export const enLocale: LocalePlugin = {
     "chat.sendNotReceived": "The message did not reach the server. Its text is back in the input box.",
     "chat.tokensSaved": "{saved} saved",
     "chatMinimap.earlierTurns": "Earlier messages are not loaded yet. Click to load",
+    "chatMinimap.loadAnchor": "Not loaded yet. Click to load and jump here",
+    "chatMinimap.tooFar": "That message is too far back to jump to; scroll up to load it",
     "chatMinimap.lockPreview": "Lock: don't open the preview on hover",
     "chatMinimap.unlockPreview": "Unlock the hover preview",
     "i18n.close": "Close",

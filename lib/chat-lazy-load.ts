@@ -59,3 +59,12 @@ export function shouldShowScrollToLatest(
   if (scrollHeight <= clientHeight) return false;
   return !isScrollAtTail(scrollTop, clientHeight, scrollHeight, tolerance);
 }
+
+/**
+ * Jumping to a question the rail lists but the page does not hold: older pages
+ * are read at this size, at most this many, before the click gives up. A page of
+ * 400 visible messages keeps a long jump to a handful of requests; the cap keeps
+ * a stray click from pulling a whole book into the browser.
+ */
+export const ANCHOR_REVEAL_PAGE = 400;
+export const ANCHOR_REVEAL_PAGES = 8;

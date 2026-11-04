@@ -83,6 +83,11 @@
   line-clamp: 4;
 }
 
+/* Not paged in yet: clicking it pages that history in and jumps there. */
+.user[data-unloaded="true"] {
+  color: var(--text-muted);
+}
+
 .user:hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }

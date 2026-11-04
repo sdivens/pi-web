@@ -18,7 +18,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { collectMinimapAnchors } = await jiti.import("./ChatMinimap.tsx");
+const { collectMinimapAnchors, mergeMinimapNodes } = await jiti.import("./ChatMinimap.tsx");
 
 // The shapes ChatWindow's own walk and this one must agree on.
 const user = (text) => ({ role: "user", content: text });
@@ -97,4 +97,30 @@ test("reads the text of an image prompt and skips empty ones", () => {
   ]);
   assert.equal(anchors.length, 2);
   assert.deepEqual(anchors.map((anchor) => anchor.refIndex), [0, 1]);
+});
+
+test("lists every question the server knows, measured or not", () => {
+  // The rail's own page holds two questions; the server's list has four. The two
+  // without a measured row keep `scrollTop: null`, which is what makes a click
+  // page that history in instead of scrolling nowhere.
+  const anchors = [
+    { entryId: "u1", text: "第一个问题" },
+    { entryId: "u2", text: "第二个问题" },
+    { entryId: "u3", text: "第三个问题" },
+    { entryId: "u4", text: "第四个问题" },
+  ];
+  const measured = new Map([["u3", 4200], ["u4", 9100]]);
+  assert.deepEqual(mergeMinimapNodes(anchors, measured), [
+    { entryId: "u1", text: "第一个问题", scrollTop: null },
+    { entryId: "u2", text: "第二个问题", scrollTop: null },
+    { entryId: "u3", text: "第三个问题", scrollTop: 4200 },
+    { entryId: "u4", text: "第四个问题", scrollTop: 9100 },
+  ]);
+});
+
+test("a measured row of another branch is not borrowed", () => {
+  // `scrollTop` is looked up by entry id, never by position: after a branch
+  // change the rows on screen belong to other entries.
+  const nodes = mergeMinimapNodes([{ entryId: "a", text: "a" }], new Map([["b", 12]]));
+  assert.deepEqual(nodes, [{ entryId: "a", text: "a", scrollTop: null }]);
 });
