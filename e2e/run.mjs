@@ -268,19 +268,31 @@ try {
     const sentinel = page.getByText("Scroll up to load earlier messages", { exact: true });
     await sentinel.waitFor({ state: "attached" });
     assert.equal(await page.getByText(text(4949), { exact: true }).count(), 0);
-    // The minimap lists the user's own messages only: no turn numbers, and the
-    // assistant replies of a turn are not rows of their own.
+    // The minimap lists every question on the branch, from
+    // `GET /api/sessions/[id]/user-anchors`, not just the page the browser holds.
+    // No turn numbers, and the assistant replies of a turn are not rows.
+    const questionCount = 2500;
     const readMinimapTurn = async (screenshot) => {
       const node = page.locator("[data-minimap-node-index='0']");
       await node.waitFor();
+      // The rail starts on the loaded page and swaps to the branch's questions
+      // when `user-anchors` answers.
+      await page.waitForFunction(
+        (count) => document.querySelectorAll("[data-minimap-node-index]").length === count,
+        questionCount,
+        { timeout: 20_000 },
+      );
       const rect = await node.boundingBox();
       assert.ok(rect);
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
       const preview = page.locator("[data-minimap-preview-box]");
-      const turn = preview.locator("[data-minimap-preview-index]").filter({ hasText: text(4998) });
+      const rows = preview.locator("[data-minimap-preview-index]");
       const result = {
-        text: (await turn.textContent())?.trim(),
-        earlier: await preview.locator("[data-minimap-preview-earlier]").textContent(),
+        rows: await rows.count(),
+        first: (await rows.first().textContent())?.trim(),
+        last: (await rows.last().textContent())?.trim(),
+        // Every question of the branch is listed, so nothing is "not loaded yet".
+        earlierRows: await preview.locator("[data-minimap-preview-earlier]").count(),
         // text(4997) is an assistant reply of the same loaded page.
         assistantRows: await preview.locator("[data-minimap-preview-index]").filter({ hasText: text(4997) }).count(),
         assistantJumps: await preview.locator("[data-minimap-preview-assistant]").count(),
@@ -293,8 +305,10 @@ try {
     };
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-first-page.png"), {
-        text: text(4998),
-        earlier: "Earlier messages are not loaded yet. Click to load",
+        rows: questionCount,
+        first: text(0),
+        last: text(4998),
+        earlierRows: 0,
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,
@@ -337,12 +351,54 @@ try {
       Array.from({ length: 5000 - oldest }, (_, i) => text(oldest + i)), "Missing, reordered, or duplicate chat messages");
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-paged.png"), {
-        text: text(4998),
-        earlier: "Earlier messages are not loaded yet. Click to load",
+        rows: questionCount,
+        first: text(0),
+        last: text(4998),
+        earlierRows: 0,
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,
       }, "Loading older pages must keep every node on its own message");
+
+      // A question this page does not hold: the rail pages that history in
+      // (`tail=400`) and jumps there, instead of doing nothing. Read it fresh,
+      // as a page that has paged around is already far in.
+      await page.goto(`${base}/?session=${LONG}`, { waitUntil: "domcontentloaded" });
+      await page.locator("[data-minimap-node-index]").first().waitFor();
+      await page.waitForFunction(
+        (count) => document.querySelectorAll("[data-minimap-node-index]").length === count,
+        questionCount,
+        { timeout: 20_000 },
+      );
+      const jumpNode = await page.locator("[data-minimap-node-index='0']").boundingBox();
+      assert.ok(jumpNode);
+      await page.mouse.move(jumpNode.x + jumpNode.width / 2, jumpNode.y + jumpNode.height / 2);
+      await page.locator("[data-minimap-preview-box]").waitFor();
+      const jumpTarget = text(4700);
+      const jumpRow = page.locator("[data-minimap-preview-index]").filter({ hasText: jumpTarget }).first();
+      const jumpResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === `/api/sessions/${LONG}/context` && url.searchParams.get("tail") === "400";
+      });
+      await jumpRow.locator("button").click();
+      assert.equal((await jumpResponse).status(), 200, "The rail must page the clicked question in");
+      // The preview lists the same text, so read the chat's own paragraph.
+      await page.locator("p", { hasText: jumpTarget }).first().waitFor({ state: "attached" });
+      // The rail puts a question at 30% of the viewport, as clicking a node does;
+      // poll while the smooth scroll settles.
+      await page.waitForFunction((needle) => {
+        const container = Array.from(document.querySelectorAll("div"))
+          .filter((element) => element.scrollHeight > element.clientHeight + 50 && element.clientHeight > 400)
+          .sort((a, b) => b.clientHeight - a.clientHeight)[0];
+        const row = Array.from(container?.querySelectorAll("[data-entry-id]") ?? [])
+          .filter((element) => (element.textContent ?? "").includes(needle))
+          .pop();
+        if (!container || !row) return false;
+        const percent = (row.getBoundingClientRect().top - container.getBoundingClientRect().top)
+          / container.clientHeight * 100;
+        return percent >= 20 && percent <= 45;
+      }, jumpTarget, { timeout: 15_000 });
+      await page.mouse.move(0, 0);
     }
     await page.screenshot({ path: join(artifacts, `history-${viewport.width}.png`) });
 

@@ -551,6 +551,7 @@ export const ChatMinimap = memo(function ChatMinimap({
             key={node.index}
             data-minimap-node-index={node.index}
             data-minimap-node-active={isActive ? "" : undefined}
+            data-minimap-node-unloaded={node.targetTurn.scrollTop === null ? "true" : undefined}
             style={{
               position: "absolute",
               top: `${node.topRatio * 100}%`,
@@ -571,7 +572,11 @@ export const ChatMinimap = memo(function ChatMinimap({
                 height: 8,
                 borderRadius: 2,
                 background: isActive ? "rgba(128,128,128,0.42)" : "rgba(128,128,128,0.16)",
-                border: `1.5px solid ${isActive ? "rgba(128,128,128,0.95)" : "rgba(128,128,128,0.58)"}`,
+                border: `1.5px solid ${isActive
+                  ? "rgba(128,128,128,0.95)"
+                  : node.targetTurn.scrollTop === null
+                    ? "rgba(128,128,128,0.35)"
+                    : "rgba(128,128,128,0.58)"}`,
                 boxShadow: isActive ? "0 0 0 2px var(--bg-panel)" : "none",
                 transition: "transform 0.1s, background 0.1s",
                 transform: isNearest ? "scale(1.25)" : "scale(1)",

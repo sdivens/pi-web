@@ -61,6 +61,7 @@ app/api/
   sessions/route.ts                GET list all sessions
   sessions/[id]/route.ts           GET/PATCH/DELETE a session
   sessions/[id]/context/route.ts   GET ?leafId=&tail=&before= a page of a leaf's context (tail defaults to 50; before pages upward)
+  sessions/[id]/user-anchors/route.ts GET ?leafId= every user message on a branch (id + first line) for the chat's rail
   sessions/[id]/export/route.ts    GET exported HTML
   sessions/[id]/fork/route.ts      POST copy the session's current branch into a new session, or { side: true } a side chat (never starts an AgentSession)
   sessions/delete/route.ts         POST { ids } delete sessions and their subagents (a project's Delete all sessions); running ones kept
@@ -133,6 +134,7 @@ lib/
   side-chat-client.ts       client: ask the fork route for a side chat, refusals as translated notices
   session-reader.ts         SessionManager wrappers, path cache, buildSessionContext adapter
   project-closed.ts         closed sidebar projects: the process's Set + revision on globalThis, never a file
+  user-anchors.ts           the rail's list: a question's first line, the branch's user messages, the fetch (client-safe)
   session-fork.ts           forkSessionBranch(): the sidebar's Fork, a leaf-branch copy on a fresh SessionManager named after its source, typed refusals; createSideSession(): the same copy as a side chat
   side-session.ts           a side chat's metadata entry, allowed tools, hidden boundary message, own entries for usage
   session-fork-name.ts      client-safe Fork naming: source title + " · " + 4 hex; splitting the suffix off for the row and toast
@@ -270,6 +272,7 @@ hooks/
   useFilesPlacement.ts     per-browser choice: the desktop sidebar's file browser below the sessions or in its own tab
   useGroupDrag.ts          dragging a sidebar project group: mouse threshold, touch/pen long-press, auto-scroll, drop
   useIsMobile.ts           responsive breakpoint
+  useUserAnchors.ts        the rail's questions, refetched when a turn adds messages
   usePageHidden.ts         HIDDEN_PAGE_GRACE_MS; true once the page has been hidden that long (file watches pause)
   useSessionUiState.ts     sidebar pins, archive, project order: optimistic writes in order, refetch on revision change
   useSidebarMotion.ts      the sidebar's fold and archive-view motion: phase, end fallback, reduced motion, what shows meanwhile
