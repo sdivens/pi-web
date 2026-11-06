@@ -749,6 +749,8 @@ export const enLocale: LocalePlugin = {
     "transcriptNotice.thinkingDropped": "Anthropic dropped {count} thinking blocks (details in session)",
     "transcriptNotice.foldCacheMiss": "cache miss {tokens} tokens{cost}",
     "transcriptNotice.foldCacheMisses": "{count} cache misses {tokens} tokens{cost}",
+    "settings.minimapWindow": "Questions in the chat rail",
+    "settings.minimapWindowDescription": "How many of your own questions the rail beside the chat lists at a time; the Older questions row shows more. Desktop only: phones hide the rail.",
     "settings.cacheMissNotices": "Show cache and cost notices",
     "settings.cacheMissNoticesDescription": "pi's showCacheMissNotices: cache misses, cache warming, compaction cost and Anthropic dropping thinking blocks, in the chat. Saved to the global settings.json; a project's .pi/settings.json can override it.",
     "chat.filesWritten": "Files changed",

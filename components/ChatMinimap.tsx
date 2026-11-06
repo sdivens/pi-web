@@ -12,6 +12,8 @@ interface Props {
   messages: AgentMessage[];
   /** Which session this rail belongs to: another one reopens the default window. */
   sessionKey?: string | null;
+  /** Questions shown at a time (Settings › General › Chat); the widen step too. */
+  windowSize?: number;
   /** `entryIds[i]` belongs to `messages[i]`: how a question finds its row. */
   entryIds?: string[];
   scrollContainer: RefObject<HTMLDivElement | null>;
@@ -30,9 +32,10 @@ interface Props {
 }
 
 /**
- * Questions the rail carries at a time, newest last. A session of fifty turns
- * drew fifty evenly spaced dots — too dense to aim at — so it keeps a window and
- * the preview's "earlier questions" row widens it by this much per click.
+ * Questions the rail carries at a time, newest last, unless Settings says
+ * otherwise (`useMinimapWindow`). A session of fifty turns drew fifty evenly
+ * spaced dots — too dense to aim at — so it keeps a window and the preview's
+ * "earlier questions" row widens it by this much per click.
  */
 export const MINIMAP_VISIBLE_QUESTIONS = 10;
 const MINIMAP_WIDTH = 36;
@@ -209,6 +212,7 @@ const PreviewRow = memo(function PreviewRow({
 export const ChatMinimap = memo(function ChatMinimap({
   messages,
   sessionKey,
+  windowSize = MINIMAP_VISIBLE_QUESTIONS,
   entryIds,
   scrollContainer,
   messageRefs,
@@ -244,10 +248,11 @@ export const ChatMinimap = memo(function ChatMinimap({
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
-  // Another session starts at the default window again.
+  // Another session — or another size in Settings — reopens the window at that
+  // size, so a change is visible at once instead of after the next session.
   useEffect(() => {
-    setVisibleQuestions(MINIMAP_VISIBLE_QUESTIONS);
-  }, [sessionKey]);
+    setVisibleQuestions(windowSize);
+  }, [sessionKey, windowSize]);
 
   const shownAnchors = useMemo(
     () => (anchors && anchors.length > 0 ? windowAnchors(anchors, visibleQuestions) : null),
@@ -668,7 +673,7 @@ export const ChatMinimap = memo(function ChatMinimap({
               data-minimap-preview-earlier-questions=""
               // Widen the window by another page of questions; each one then
               // pages its own history in when clicked.
-              onClick={() => setVisibleQuestions((count) => count + MINIMAP_VISIBLE_QUESTIONS)}
+              onClick={() => setVisibleQuestions((count) => count + windowSize)}
             >
               {t("chatMinimap.earlierQuestions", { count: hiddenQuestions })}
             </button>

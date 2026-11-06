@@ -270,6 +270,7 @@ hooks/
   useAudio.ts              completion sound + AudioContext unlock
   useDragDrop.ts           chat drop zone: dropped files, folders marked
   useFilesPlacement.ts     per-browser choice: the desktop sidebar's file browser below the sessions or in its own tab
+  useMinimapWindow.ts      per-browser choice: questions the chat's rail carries at a time (Settings › General › Chat)
   useGroupDrag.ts          dragging a sidebar project group: mouse threshold, touch/pen long-press, auto-scroll, drop
   useIsMobile.ts           responsive breakpoint
   useUserAnchors.ts        the rail's questions, refetched when a turn adds messages

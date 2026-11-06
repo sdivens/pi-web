@@ -15,6 +15,11 @@ import {
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { useFilesPlacement, setFilesPlacement } from "@/hooks/useFilesPlacement";
+import {
+  MINIMAP_WINDOW_CHOICES,
+  setMinimapWindow,
+  useMinimapWindow,
+} from "@/hooks/useMinimapWindow";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import {
@@ -80,6 +85,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
   const enterSendMode = useEnterSendMode();
   const filesPlacement = useFilesPlacement();
+  const minimapWindow = useMinimapWindow();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
@@ -366,6 +372,29 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             </div>
           </div>
+          <div
+            className="settings-chat-option settings-chat-switch-option"
+            role="radiogroup"
+            aria-label={t("settings.minimapWindow")}
+            aria-describedby="settings-minimap-window-description"
+          >
+            <span>{t("settings.minimapWindow")}</span>
+            <div className="settings-send-mode-options">
+              {MINIMAP_WINDOW_CHOICES.map((choice) => (
+                <label key={choice} className="settings-send-mode-option">
+                  <input
+                    type="radio"
+                    name="minimap-window"
+                    value={choice}
+                    checked={minimapWindow === choice}
+                    onChange={() => setMinimapWindow(choice)}
+                    className="sr-only"
+                  />
+                  <span className="settings-send-mode-label">{choice}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="settings-chat-option settings-chat-switch-option">
             <span>{t("settings.cacheMissNotices")}</span>
             <ConfigSwitch
@@ -377,6 +406,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
             />
           </div>
         </div>
+        <p id="settings-minimap-window-description" className="settings-general-description">{t("settings.minimapWindowDescription")}</p>
         <p id="settings-cache-miss-notices-description" className="settings-general-description">{t("settings.cacheMissNoticesDescription")}</p>
         {cacheMissNoticesError && <p role="alert" className="settings-general-error">{cacheMissNoticesError}</p>}
       </section>

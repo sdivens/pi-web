@@ -749,6 +749,8 @@ export const zhTWLocale: LocalePlugin = {
     "transcriptNotice.thinkingDropped": "Anthropic 捨棄了 {count} 個思考區塊（詳情見工作階段檔案）",
     "transcriptNotice.foldCacheMiss": "快取未命中 {tokens} Token{cost}",
     "transcriptNotice.foldCacheMisses": "快取未命中 {count} 次 {tokens} Token{cost}",
+    "settings.minimapWindow": "右側提問列表則數",
+    "settings.minimapWindowDescription": "聊天右側導軌一次列出多少則你自己發的提問；點「更早的提問」可展開更多。僅桌面端生效，手機上不顯示該導軌。",
     "settings.cacheMissNotices": "顯示快取與費用提示",
     "settings.cacheMissNoticesDescription": "即 pi 的 showCacheMissNotices：在對話中顯示快取未命中、快取預熱、壓縮費用，以及 Anthropic 捨棄思考區塊。儲存到全域 settings.json，專案的 .pi/settings.json 可以覆寫它。",
     "chat.filesWritten": "已變更的檔案",

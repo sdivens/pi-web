@@ -749,6 +749,8 @@ export const zhCNLocale: LocalePlugin = {
     "transcriptNotice.thinkingDropped": "Anthropic 丢弃了 {count} 个思考块（详情见会话文件）",
     "transcriptNotice.foldCacheMiss": "缓存未命中 {tokens} Token{cost}",
     "transcriptNotice.foldCacheMisses": "缓存未命中 {count} 次 {tokens} Token{cost}",
+    "settings.minimapWindow": "右侧提问列表条数",
+    "settings.minimapWindowDescription": "聊天右侧导轨一次列出多少条你自己发的提问；点「更早的提问」可展开更多。仅桌面端生效，手机上不显示该导轨。",
     "settings.cacheMissNotices": "显示缓存与费用提示",
     "settings.cacheMissNoticesDescription": "即 pi 的 showCacheMissNotices：在对话中显示缓存未命中、缓存预热、压缩费用，以及 Anthropic 丢弃思考块。保存到全局 settings.json，项目的 .pi/settings.json 可以覆盖它。",
     "chat.filesWritten": "改动的文件",

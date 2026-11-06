@@ -32,6 +32,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useUserAnchors } from "@/hooks/useUserAnchors";
+import { useMinimapWindow } from "@/hooks/useMinimapWindow";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { DebugClientSession } from "@/lib/debug-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
@@ -841,6 +842,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // The rail lists every question on the branch, not just this page's
   // (`GET /api/sessions/[id]/user-anchors`).
   const userAnchors = useUserAnchors(session?.id, messages.length, Boolean(sessionBusy) || isStreaming);
+  // How many questions the rail shows at a time (Settings › General › Chat).
+  const minimapWindow = useMinimapWindow();
 
   // Jumping to a question the browser has not paged in yet: read older pages
   // until its entry is here (the rail's pending id then scrolls to it), with a
@@ -1301,6 +1304,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           <ChatMinimap
             messages={messages}
             sessionKey={session?.id ?? newSessionCwd ?? null}
+            windowSize={minimapWindow}
             entryIds={entryIds}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}

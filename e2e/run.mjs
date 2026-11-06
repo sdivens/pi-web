@@ -412,6 +412,35 @@ try {
         return percent >= 20 && percent <= 45;
       }, jumpTarget, { timeout: 15_000 });
       await page.mouse.move(0, 0);
+      // Settings › General sets how many questions the rail carries, and the rail
+      // follows at once (a widened window collapses back to the chosen size).
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await page.locator(".settings-section-tabs").getByRole("button", { name: "General", exact: true }).click();
+      const windowRadio = page.getByRole("radio", { name: "20", exact: true });
+      await windowRadio.locator("..").click();
+      assert.equal(await windowRadio.isChecked(), true);
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "hidden" });
+      await page.waitForFunction(
+        () => document.querySelectorAll("[data-minimap-node-index]").length === 20,
+        undefined,
+        { timeout: 10_000 },
+      );
+      assert.equal(
+        await page.evaluate(() => window.localStorage.getItem("pi-web:minimap-window")),
+        "20",
+        "The choice is remembered for the next visit",
+      );
+      const railBox = await page.locator("[data-minimap-node-index='0']").boundingBox();
+      assert.ok(railBox);
+      await page.mouse.move(railBox.x + railBox.width / 2, railBox.y + railBox.height / 2);
+      await page.locator("[data-minimap-preview-box]").waitFor();
+      assert.equal(
+        (await page.locator("[data-minimap-preview-earlier-questions]").textContent())?.trim(),
+        `Older questions (${questionCount - 20})`,
+        "Widening steps by the configured size too",
+      );
+      await page.mouse.move(0, 0);
     }
     await page.screenshot({ path: join(artifacts, `history-${viewport.width}.png`) });
 
