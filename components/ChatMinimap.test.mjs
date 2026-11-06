@@ -18,7 +18,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { collectMinimapAnchors, mergeMinimapNodes } = await jiti.import("./ChatMinimap.tsx");
+const { collectMinimapAnchors, mergeMinimapNodes, windowAnchors, MINIMAP_VISIBLE_QUESTIONS } = await jiti.import("./ChatMinimap.tsx");
 
 // The shapes ChatWindow's own walk and this one must agree on.
 const user = (text) => ({ role: "user", content: text });
@@ -123,4 +123,15 @@ test("a measured row of another branch is not borrowed", () => {
   // change the rows on screen belong to other entries.
   const nodes = mergeMinimapNodes([{ entryId: "a", text: "a" }], new Map([["b", 12]]));
   assert.deepEqual(nodes, [{ entryId: "a", text: "a", scrollTop: null }]);
+});
+
+test("the rail keeps the newest questions, newest last", () => {
+  const questions = Array.from({ length: 40 }, (_, i) => `q${i}`);
+  assert.deepEqual(windowAnchors(questions, MINIMAP_VISIBLE_QUESTIONS), questions.slice(-10));
+  assert.equal(windowAnchors(questions, 25).length, 25);
+});
+
+test("a branch shorter than the window is listed whole", () => {
+  assert.deepEqual(windowAnchors(["a", "b"], 10), ["a", "b"]);
+  assert.deepEqual(windowAnchors([], 10), []);
 });

@@ -1300,6 +1300,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         {isMobile || pendingScrollRestore ? null : (
           <ChatMinimap
             messages={messages}
+            sessionKey={session?.id ?? newSessionCwd ?? null}
             entryIds={entryIds}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}

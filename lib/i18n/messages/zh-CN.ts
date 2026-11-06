@@ -901,6 +901,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.sendUnconfirmed": "无法确认消息是否已发送。原文已放回输入框，重发前请先检查会话。",
     "chat.sendNotReceived": "消息没有送达服务器，原文已放回输入框。",
     "chat.tokensSaved": "节省 {saved}",
+    "chatMinimap.earlierQuestions": "更早的提问（还有 {count} 条）",
     "chatMinimap.earlierTurns": "更早的消息还没加载，点击加载",
     "chatMinimap.loadAnchor": "还没加载，点击加载并跳转",
     "chatMinimap.tooFar": "那条消息太远，无法直接跳转；向上滚动加载它",

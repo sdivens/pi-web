@@ -901,6 +901,7 @@ export const enLocale: LocalePlugin = {
     "chat.sendUnconfirmed": "Couldn't confirm the message was sent. Its text is back in the input box: check the conversation before sending it again.",
     "chat.sendNotReceived": "The message did not reach the server. Its text is back in the input box.",
     "chat.tokensSaved": "{saved} saved",
+    "chatMinimap.earlierQuestions": "Older questions ({count})",
     "chatMinimap.earlierTurns": "Earlier messages are not loaded yet. Click to load",
     "chatMinimap.loadAnchor": "Not loaded yet. Click to load and jump here",
     "chatMinimap.tooFar": "That message is too far back to jump to; scroll up to load it",

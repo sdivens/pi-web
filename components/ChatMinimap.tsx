@@ -10,6 +10,8 @@ import styles from "./ChatMinimap.module.css";
 
 interface Props {
   messages: AgentMessage[];
+  /** Which session this rail belongs to: another one reopens the default window. */
+  sessionKey?: string | null;
   /** `entryIds[i]` belongs to `messages[i]`: how a question finds its row. */
   entryIds?: string[];
   scrollContainer: RefObject<HTMLDivElement | null>;
@@ -27,6 +29,12 @@ interface Props {
   turnsBefore: number;
 }
 
+/**
+ * Questions the rail carries at a time, newest last. A session of fifty turns
+ * drew fifty evenly spaced dots — too dense to aim at — so it keeps a window and
+ * the preview's "earlier questions" row widens it by this much per click.
+ */
+export const MINIMAP_VISIBLE_QUESTIONS = 10;
 const MINIMAP_WIDTH = 36;
 const MAX_NODE_GAP = 50;
 const MINIMAP_PADDING = 12;
@@ -81,6 +89,17 @@ interface TurnInfo {
   /** First line, from the server's list (or the loaded message's own text). */
   text: string;
   scrollTop: number | null;
+}
+
+/**
+ * The newest `visible` questions: the rail's window over the branch.
+ *
+ * Newest last, as the list and the chat are ordered, so the dock at the bottom
+ * of the rail is always the latest question.
+ */
+export function windowAnchors<T>(anchors: readonly T[], visible: number): readonly T[] {
+  if (visible <= 0) return [];
+  return anchors.length > visible ? anchors.slice(-visible) : anchors;
 }
 
 /**
@@ -189,6 +208,7 @@ const PreviewRow = memo(function PreviewRow({
 
 export const ChatMinimap = memo(function ChatMinimap({
   messages,
+  sessionKey,
   entryIds,
   scrollContainer,
   messageRefs,
@@ -204,6 +224,7 @@ export const ChatMinimap = memo(function ChatMinimap({
   const [minimapHeight, setMinimapHeight] = useState(600);
   const [minimapHovered, setMinimapHovered] = useState(false);
   const [locked, setLocked] = useState(loadMinimapPreviewLocked);
+  const [visibleQuestions, setVisibleQuestions] = useState(MINIMAP_VISIBLE_QUESTIONS);
   const [mouseYRatio, setMouseYRatio] = useState<number | null>(null);
   const draggingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -222,10 +243,21 @@ export const ChatMinimap = memo(function ChatMinimap({
 
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // Another session starts at the default window again.
+  useEffect(() => {
+    setVisibleQuestions(MINIMAP_VISIBLE_QUESTIONS);
+  }, [sessionKey]);
+
+  const shownAnchors = useMemo(
+    () => (anchors && anchors.length > 0 ? windowAnchors(anchors, visibleQuestions) : null),
+    [anchors, visibleQuestions],
+  );
+  const hiddenQuestions = anchors ? Math.max(0, anchors.length - visibleQuestions) : 0;
   const entryIdsRef = useRef(entryIds);
   entryIdsRef.current = entryIds;
-  const anchorsRef = useRef(anchors);
-  anchorsRef.current = anchors;
+  const anchorsRef = useRef<readonly UserAnchorEntry[] | null>(shownAnchors);
+  anchorsRef.current = shownAnchors;
 
   const nodeLayout = useMemo(
     () => layoutNodes(allNodes, minimapHeight),
@@ -369,7 +401,7 @@ export const ChatMinimap = memo(function ChatMinimap({
       updateScroll();
     }, 50);
     return () => clearTimeout(timeout);
-  }, [messages.length, anchors, measureNodes, updateScroll]);
+  }, [messages.length, shownAnchors, measureNodes, updateScroll]);
 
   const scrollToNode = useCallback((node: NodeInfo, behavior: ScrollBehavior) => {
     const scrollEl = scrollContainer.current;
@@ -514,7 +546,7 @@ export const ChatMinimap = memo(function ChatMinimap({
         overflow: "visible",
       }}
     >
-      {turnsBefore > 0 && (
+      {(hiddenQuestions > 0 || (turnsBefore > 0 && !anchors?.length)) && (
         <div
           data-minimap-earlier=""
           style={{
@@ -628,7 +660,20 @@ export const ChatMinimap = memo(function ChatMinimap({
           onMouseDown={(event) => event.stopPropagation()}
           onMouseMove={(event) => event.stopPropagation()}
         >
-          {turnsBefore > 0 && (anchors?.length ?? 0) === 0 && (
+          {hiddenQuestions > 0 && (
+            <button
+              type="button"
+              className={styles.earlier}
+              data-minimap-preview-earlier=""
+              data-minimap-preview-earlier-questions=""
+              // Widen the window by another page of questions; each one then
+              // pages its own history in when clicked.
+              onClick={() => setVisibleQuestions((count) => count + MINIMAP_VISIBLE_QUESTIONS)}
+            >
+              {t("chatMinimap.earlierQuestions", { count: hiddenQuestions })}
+            </button>
+          )}
+          {hiddenQuestions === 0 && turnsBefore > 0 && !anchors?.length && (
             <button
               type="button"
               className={styles.earlier}

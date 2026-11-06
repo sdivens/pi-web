@@ -272,16 +272,19 @@ try {
     // `GET /api/sessions/[id]/user-anchors`, not just the page the browser holds.
     // No turn numbers, and the assistant replies of a turn are not rows.
     const questionCount = 2500;
+    // The rail carries a window of 10 questions at a time.
+    const railWindow = 10;
+    const waitForRail = async () => page.waitForFunction(
+      (count) => document.querySelectorAll("[data-minimap-node-index]").length === count,
+      railWindow,
+      { timeout: 20_000 },
+    );
     const readMinimapTurn = async (screenshot) => {
       const node = page.locator("[data-minimap-node-index='0']");
       await node.waitFor();
       // The rail starts on the loaded page and swaps to the branch's questions
       // when `user-anchors` answers.
-      await page.waitForFunction(
-        (count) => document.querySelectorAll("[data-minimap-node-index]").length === count,
-        questionCount,
-        { timeout: 20_000 },
-      );
+      await waitForRail();
       const rect = await node.boundingBox();
       assert.ok(rect);
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -291,8 +294,8 @@ try {
         rows: await rows.count(),
         first: (await rows.first().textContent())?.trim(),
         last: (await rows.last().textContent())?.trim(),
-        // Every question of the branch is listed, so nothing is "not loaded yet".
-        earlierRows: await preview.locator("[data-minimap-preview-earlier]").count(),
+        // The window's first row widens it: 2500 questions, 10 shown.
+        earlier: (await preview.locator("[data-minimap-preview-earlier]").textContent())?.trim() ?? null,
         // text(4997) is an assistant reply of the same loaded page.
         assistantRows: await preview.locator("[data-minimap-preview-index]").filter({ hasText: text(4997) }).count(),
         assistantJumps: await preview.locator("[data-minimap-preview-assistant]").count(),
@@ -305,10 +308,10 @@ try {
     };
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-first-page.png"), {
-        rows: questionCount,
-        first: text(0),
+        rows: railWindow,
+        first: text(4998 - (railWindow - 1) * 2),
         last: text(4998),
-        earlierRows: 0,
+        earlier: `Older questions (${questionCount - railWindow})`,
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,
@@ -351,10 +354,10 @@ try {
       Array.from({ length: 5000 - oldest }, (_, i) => text(oldest + i)), "Missing, reordered, or duplicate chat messages");
     if (viewport.width > 600) {
       assert.deepEqual(await readMinimapTurn("minimap-turns-paged.png"), {
-        rows: questionCount,
-        first: text(0),
+        rows: railWindow,
+        first: text(4998 - (railWindow - 1) * 2),
         last: text(4998),
-        earlierRows: 0,
+        earlier: `Older questions (${questionCount - railWindow})`,
         assistantRows: 0,
         assistantJumps: 0,
         numbers: 0,
@@ -365,17 +368,27 @@ try {
       // as a page that has paged around is already far in.
       await page.goto(`${base}/?session=${LONG}`, { waitUntil: "domcontentloaded" });
       await page.locator("[data-minimap-node-index]").first().waitFor();
-      await page.waitForFunction(
-        (count) => document.querySelectorAll("[data-minimap-node-index]").length === count,
-        questionCount,
-        { timeout: 20_000 },
-      );
+      await waitForRail();
       const jumpNode = await page.locator("[data-minimap-node-index='0']").boundingBox();
       assert.ok(jumpNode);
       await page.mouse.move(jumpNode.x + jumpNode.width / 2, jumpNode.y + jumpNode.height / 2);
       await page.locator("[data-minimap-preview-box]").waitFor();
-      const jumpTarget = text(4700);
-      const jumpRow = page.locator("[data-minimap-preview-index]").filter({ hasText: jumpTarget }).first();
+      // The window starts at the newest 10; widen it three times, then click the
+      // oldest question it now lists — the first page holds only the newest 25,
+      // so that one is not loaded.
+      const widen = page.locator("[data-minimap-preview-earlier-questions]");
+      for (let click = 1; click <= 3; click += 1) {
+        await widen.click();
+        await page.waitForFunction(
+          (count) => document.querySelectorAll("[data-minimap-preview-index]").length === count,
+          railWindow * (click + 1),
+          { timeout: 10_000 },
+        );
+      }
+      assert.equal(await widen.textContent(), `Older questions (${questionCount - railWindow * 4})`);
+      const jumpRow = page.locator("[data-minimap-preview-index]").first();
+      const jumpTarget = ((await jumpRow.textContent()) ?? "").trim();
+      assert.ok(jumpTarget.length > 0, "The widened window must list a question");
       const jumpResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return url.pathname === `/api/sessions/${LONG}/context` && url.searchParams.get("tail") === "400";

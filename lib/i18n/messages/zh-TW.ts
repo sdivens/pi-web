@@ -901,6 +901,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.sendUnconfirmed": "無法確認訊息是否已送出。原文已移回輸入框，重新送出前請先檢查對話。",
     "chat.sendNotReceived": "訊息沒有送達伺服器，原文已移回輸入框。",
     "chat.tokensSaved": "已節省 {saved}",
+    "chatMinimap.earlierQuestions": "更早的提問（還有 {count} 則）",
     "chatMinimap.earlierTurns": "更早的訊息還沒載入，點擊載入",
     "chatMinimap.loadAnchor": "還沒載入，點擊載入並跳轉",
     "chatMinimap.tooFar": "那則訊息太遠，無法直接跳轉；向上捲動載入它",
